@@ -26,8 +26,11 @@ function parseDeltaSeconds(?string $value): ?int
         return null;
     }
 
-    if (\filter_var($value, \FILTER_VALIDATE_INT,
-            ['options' => ['min_range' => 0, 'max_range' => \PHP_INT_MAX]]) !== false) {
+    if (\filter_var(
+        $value,
+        \FILTER_VALIDATE_INT,
+        ['options' => ['min_range' => 0, 'max_range' => \PHP_INT_MAX]]
+    ) !== false) {
         return (int) $value;
     }
 

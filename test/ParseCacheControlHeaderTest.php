@@ -28,7 +28,7 @@ class ParseCacheControlHeaderTest extends TestCase
 
     private function parse(string $headerValue): array
     {
-        return parseCacheControlHeader(new class (['cache-control' => $headerValue]) extends Message {
+        return parseCacheControlHeader(new class(['cache-control' => $headerValue]) extends Message {
             public function __construct(array $headers = [])
             {
                 $this->setHeaders($headers);
