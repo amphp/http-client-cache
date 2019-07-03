@@ -337,7 +337,7 @@ function createTeeStream(InputStream $inputStream, int $count = 2): array
 
     asyncCall(static function () use ($inputStream, $emitters) {
         try {
-            while (null !== $chunk = $inputStream->read()) {
+            while (null !== $chunk = yield $inputStream->read()) {
                 $promises = [];
 
                 foreach ($emitters as $emitter) {

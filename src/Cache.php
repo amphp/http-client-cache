@@ -28,6 +28,11 @@ final class Cache implements ApplicationInterceptor
     /** @var StringCache */
     private $cache;
 
+    public function __construct(StringCache $cache)
+    {
+        $this->cache = $cache;
+    }
+
     public function interceptApplicationRequest(
         Request $request,
         CancellationToken $cancellationToken,
@@ -92,15 +97,19 @@ final class Cache implements ApplicationInterceptor
                     $bufferedBody = yield buffer($streamB);
                     $varyHash = $this->calculateVaryHash($response);
 
-                    yield $this->cache->set($this->getVaryCacheKey($request, $varyHash), $bufferedBody);
-
-                    $storedResponses = (yield $this->fetchStoredResponses($request)) ?? [];
-                    $storedResponses[] = CachedResponse::fromResponse(
-                        $response,
+                    $responseToStore = CachedResponse::fromResponse(
+                        $response->withRequest($request),
                         $requestTime,
                         $responseTime,
                         $varyHash
                     );
+
+                    $ttl = $this->calculateTtl([$responseToStore]);
+
+                    yield $this->cache->set($this->getVaryCacheKey($request, $varyHash), $bufferedBody, $ttl);
+
+                    $storedResponses = (yield $this->fetchStoredResponses($request)) ?? [];
+                    $storedResponses[] = $responseToStore;
 
                     yield $this->storeResponses(getPrimaryCacheKey($request), $storedResponses);
                 });
@@ -135,7 +144,7 @@ final class Cache implements ApplicationInterceptor
             $cacheData = \explode("\r\n", $rawCacheData);
 
             foreach ($cacheData as $responseData) {
-                $responses[] = \base64_decode(CachedResponse::fromCacheData($responseData));
+                $responses[] = CachedResponse::fromCacheData(\base64_decode($responseData));
             }
 
             return $responses;
