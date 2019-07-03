@@ -83,10 +83,18 @@ final class Cache implements ApplicationInterceptor
             $requestTime = now();
 
             $response = yield $client->request($request, $cancellationToken);
+            \assert($response instanceof Response);
+
+            // Another interceptor might have modified the URI or method, don't cache then
+            $sameMethod = $response->getRequest()->getMethod() === $request->getMethod();
+            $sameUri = (string) $response->getRequest()->getUri() === (string) $request->getUri();
+
+            if (!$sameMethod || !$sameUri) {
+                // TODO: Log a warning that the original response has been modified and thus we can't cache
+                return $response;
+            }
 
             $responseTime = now();
-
-            \assert($response instanceof Response);
 
             if (isCacheable($response)) {
                 [$streamA, $streamB] = createTeeStream($response->getBody());
