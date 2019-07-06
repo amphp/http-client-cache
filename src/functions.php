@@ -275,25 +275,8 @@ function selectStoredResponse(Request $request, CachedResponse ...$responses): ?
             continue;
         }
 
-        if (!$response->hasHeader('vary')) {
-            return $response;
-        }
-
-        $varyHeaderValues = $response->getHeaderArray('vary');
-        foreach ($varyHeaderValues as $varyHeaderValue) {
-            if ($varyHeaderValue === '*') {
-                continue 2; // 'A Vary header field-value of "*" always fails to match.'
-            }
-        }
-
-        $varyHeaders = \array_map('trim', \explode(',', \implode(',', $varyHeaderValues)));
-
-        $originalRequest = $response->getRequest();
-
-        foreach ($varyHeaders as $varyHeader) {
-            if ($request->getHeaderArray($varyHeader) !== $originalRequest->getHeaderArray($varyHeader)) {
-                continue 2;
-            }
+        if (!$response->matches($request)) {
+            continue;
         }
 
         return $response;

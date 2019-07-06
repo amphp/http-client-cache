@@ -6,6 +6,8 @@ use Amp\Http\Client\HttpException;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Message;
+use function Amp\Http\createFieldValueComponentMap;
+use function Amp\Http\parseFieldValueComponents;
 
 final class CachedResponse extends Message
 {
@@ -13,7 +15,7 @@ final class CachedResponse extends Message
         Response $response,
         \DateTimeImmutable $requestTime,
         \DateTimeImmutable $responseTime,
-        string $varyHash
+        string $bodyHash
     ): self {
         return new self(
             $response->getProtocolVersion(),
@@ -23,7 +25,7 @@ final class CachedResponse extends Message
             $response->getRequest(),
             $requestTime,
             $responseTime,
-            $varyHash
+            $bodyHash
         );
     }
 
@@ -45,16 +47,16 @@ final class CachedResponse extends Message
                 $data['headers'],
                 $data['request_method'],
                 $data['request_target'],
-                $data['request_headers'],
+                $data['request_vary'],
                 $data['request_time'],
                 $data['response_time'],
-                $data['vary_hash']
+                $data['body_hash']
             )) {
                 throw new HttpException('Failed to decode cached data, expected key not present');
             }
 
             $request = (new Request($data['request_target'], $data['request_method']))
-                ->withHeaders($data['request_headers']);
+                ->withHeaders($data['request_vary']);
 
             return new self(
                 $data['protocol_version'],
@@ -64,7 +66,7 @@ final class CachedResponse extends Message
                 $request,
                 new \DateTimeImmutable('@' . $data['request_time'], new \DateTimeZone('UTC')),
                 new \DateTimeImmutable('@' . $data['response_time'], new \DateTimeZone('UTC')),
-                $data['vary_hash']
+                $data['body_hash']
             );
         } catch (\Exception $e) {
             if ($e instanceof HttpException) {
@@ -86,11 +88,16 @@ final class CachedResponse extends Message
     private $status;
     /** @var string */
     private $reason;
-    /** @var Request */
-    private $request;
 
     /** @var string */
-    private $varyHash;
+    private $requestMethod;
+    /** @var string */
+    private $requestTarget;
+    /** @var string[][] */
+    private $requestHeaders;
+
+    /** @var string */
+    private $bodyHash;
 
     private function __construct(
         string $protocolVersion,
@@ -100,20 +107,23 @@ final class CachedResponse extends Message
         Request $request,
         \DateTimeImmutable $requestTime,
         \DateTimeImmutable $responseTime,
-        string $varyHash
+        string $bodyHash
     ) {
         $this->protocolVersion = $protocolVersion;
         $this->status = $status;
         $this->reason = $reason;
-        $this->request = $request;
 
         /** @noinspection PhpUnhandledExceptionInspection */
         $this->setHeaders($headers);
 
+        $this->requestMethod = $request->getMethod();
+        $this->requestTarget = (string) $request->getUri();
+        $this->requestHeaders = $this->buildVaryRequestHeaders($request);
+
         $this->requestTime = $requestTime;
         $this->responseTime = $responseTime;
 
-        $this->varyHash = $varyHash;
+        $this->bodyHash = $bodyHash;
     }
 
     public function toCacheData(): string
@@ -123,12 +133,12 @@ final class CachedResponse extends Message
             'status' => $this->status,
             'reason' => $this->reason,
             'headers' => $this->getHeaders(),
-            'request_method' => $this->request->getMethod(),
-            'request_target' => (string) $this->request->getUri(),
-            'request_headers' => $this->request->getHeaders(),
+            'request_method' => $this->requestMethod,
+            'request_target' => $this->requestTarget,
+            'request_vary' => $this->requestHeaders,
             'request_time' => $this->requestTime->getTimestamp(),
             'response_time' => $this->responseTime->getTimestamp(),
-            'vary_hash' => $this->varyHash,
+            'body_hash' => $this->bodyHash,
         ], \JSON_THROW_ON_ERROR);
     }
 
@@ -153,9 +163,36 @@ final class CachedResponse extends Message
         return $this->responseTime;
     }
 
-    public function getRequest(): Request
+    public function matches(Request $request): bool
     {
-        return $this->request;
+        $requestMethod = $request->getMethod();
+        $requestTarget = (string) $request->getUri();
+
+        if ($requestMethod !== $this->requestMethod) {
+            return false;
+        }
+
+        if ($requestTarget !== $this->requestTarget) {
+            return false;
+        }
+
+        if (!$this->hasHeader('vary')) {
+            return true;
+        }
+
+        $varyHeaders = createFieldValueComponentMap(parseFieldValueComponents($this, 'vary'));
+
+        if (isset($varyHeaders['*'])) {
+            return false;  // 'A Vary header field-value of "*" always fails to match.'
+        }
+
+        foreach ($varyHeaders as $varyHeader) {
+            if ($request->getHeaderArray($varyHeader) !== ($this->requestHeaders[$varyHeader] ?? [])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function getStatus(): int
@@ -173,8 +210,20 @@ final class CachedResponse extends Message
         return $this->protocolVersion;
     }
 
-    public function getVaryHash(): string
+    public function getBodyHash(): string
     {
-        return $this->varyHash;
+        return $this->bodyHash;
+    }
+
+    private function buildVaryRequestHeaders(Request $request): array
+    {
+        $varyHeaders = createFieldValueComponentMap(parseFieldValueComponents($this, 'vary'));
+        $requestHeaders = [];
+
+        foreach ($varyHeaders as $varyHeader => $_) {
+            $requestHeaders[$varyHeader] = $request->getHeaderArray($varyHeader);
+        }
+
+        return $requestHeaders;
     }
 }

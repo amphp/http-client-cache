@@ -19,12 +19,6 @@ use function Amp\call;
 
 final class Cache implements ApplicationInterceptor
 {
-
-    // TODO a cache generated response must have an 'Age' header
-    // see https://tools.ietf.org/html/rfc7234.html#section-5.1
-
-    // TODO Add versioning to cache to detect overrides and retry
-
     /** @var StringCache */
     private $cache;
 
@@ -46,35 +40,17 @@ final class Cache implements ApplicationInterceptor
                 return $this->fetchFreshResponse($next, $request, $cancellationToken);
             }
 
-            $cachedBody = yield $this->cache->get($this->getVaryCacheKey($request, $cachedResponse->getVaryHash()));
+            $cachedBody = yield $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
 
-            if ($cachedBody === null) {
+            if ($cachedBody === null || \hash('sha512', $cachedBody) !== $cachedResponse->getBodyHash()) {
                 return $this->fetchFreshResponse($next, $request, $cancellationToken);
             }
 
-            return $this->createResponseFromCache($cachedResponse, new InMemoryStream($cachedBody));
+            $response = $this->createResponseFromCache($cachedResponse, $request, new InMemoryStream($cachedBody));
+            $response = $response->withHeader('age', calculateAge($cachedResponse));
+
+            return $response;
         });
-    }
-
-    private function getVaryCacheKey(Request $request, string $varyHash): string
-    {
-        return getPrimaryCacheKey($request) . ' ' . $varyHash;
-    }
-
-    private function calculateVaryHash(Response $response): string
-    {
-        $headers = [];
-
-        $varyHeaderValues = $response->getHeaderArray('vary');
-        $varyHeaders = \array_map('trim', \explode(',', \implode(',', $varyHeaderValues)));
-
-        $request = $response->getRequest();
-
-        foreach ($varyHeaders as $varyHeader) {
-            $headers[\strtolower($varyHeader)] = $request->getHeaderArray($varyHeader);
-        }
-
-        return \base64_encode(\hash('sha256', \json_encode($headers, \JSON_THROW_ON_ERROR), true));
     }
 
     private function fetchFreshResponse(Client $client, Request $request, CancellationToken $cancellationToken): Promise
@@ -103,18 +79,18 @@ final class Cache implements ApplicationInterceptor
 
                 asyncCall(function () use ($request, $response, $streamB, $requestTime, $responseTime) {
                     $bufferedBody = yield buffer($streamB);
-                    $varyHash = $this->calculateVaryHash($response);
+                    $bodyHash = \hash('sha512', $bufferedBody);
 
                     $responseToStore = CachedResponse::fromResponse(
                         $response->withRequest($request),
                         $requestTime,
                         $responseTime,
-                        $varyHash
+                        $bodyHash
                     );
 
                     $ttl = $this->calculateTtl([$responseToStore]);
 
-                    yield $this->cache->set($this->getVaryCacheKey($request, $varyHash), $bufferedBody, $ttl);
+                    yield $this->cache->set($this->getBodyCacheKey($bodyHash), $bufferedBody, $ttl);
 
                     $storedResponses = (yield $this->fetchStoredResponses($request)) ?? [];
                     $storedResponses[] = $responseToStore;
@@ -127,15 +103,18 @@ final class Cache implements ApplicationInterceptor
         });
     }
 
-    private function createResponseFromCache(CachedResponse $cachedResponse, InputStream $bodyStream): Response
-    {
+    private function createResponseFromCache(
+        CachedResponse $cachedResponse,
+        Request $request,
+        InputStream $bodyStream
+    ): Response {
         return new Response(
             $cachedResponse->getProtocolVersion(),
             $cachedResponse->getStatus(),
             $cachedResponse->getReason(),
             $cachedResponse->getHeaders(),
             $bodyStream,
-            $cachedResponse->getRequest(),
+            $request,
             new ConnectionInfo(new SocketAddress(''), new SocketAddress(''))
         );
     }
@@ -186,5 +165,10 @@ final class Cache implements ApplicationInterceptor
         }
 
         return $ttl;
+    }
+
+    private function getBodyCacheKey(string $bodyHash): string
+    {
+        return 'body:' . $bodyHash;
     }
 }
