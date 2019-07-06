@@ -6,7 +6,6 @@ use Amp\Http\Client\Request;
 use Amp\Http\Message;
 use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
-use Amp\Socket\SocketAddress;
 
 /**
  * @param string|null $value
