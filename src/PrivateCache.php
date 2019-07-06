@@ -18,7 +18,6 @@ use Amp\Socket\SocketAddress;
 use Psr\Log\LoggerInterface as PsrLogger;
 use Psr\Log\NullLogger;
 use function Amp\asyncCall;
-use function Amp\ByteStream\buffer;
 use function Amp\call;
 
 final class PrivateCache implements ApplicationInterceptor
@@ -29,10 +28,24 @@ final class PrivateCache implements ApplicationInterceptor
     /** @var PsrLogger */
     private $logger;
 
+    /** @var int */
+    private $responseSizeLimit;
+
     public function __construct(StringCache $cache, ?PsrLogger $logger = null)
     {
         $this->cache = $cache;
         $this->logger = $logger ?? new NullLogger;
+        $this->responseSizeLimit = 1 * 1024 * 1024; // 1MB
+    }
+
+    public function setResponseSizeLimit(int $limit): void
+    {
+        $this->responseSizeLimit = $limit;
+    }
+
+    public function getResponseSizeLimit(): int
+    {
+        return $this->responseSizeLimit;
     }
 
     public function interceptApplicationRequest(
@@ -114,7 +127,24 @@ final class PrivateCache implements ApplicationInterceptor
 
                 asyncCall(function () use ($request, $response, $streamB, $requestTime, $responseTime) {
                     try {
-                        $bufferedBody = yield buffer($streamB);
+                        $bufferedBody = '';
+                        $skipStorage = false;
+
+                        while (($chunk = yield $streamB->read()) !== null) {
+                            if (!$skipStorage) {
+                                $bufferedBody .= $chunk;
+                            }
+
+                            if (\strlen($bufferedBody) > $this->responseSizeLimit) {
+                                $bufferedBody = '';
+                                $skipStorage = true;
+                            }
+                        }
+
+                        if ($skipStorage) {
+                            return;
+                        }
+
                         $bodyHash = \hash('sha512', $bufferedBody);
 
                         $responseToStore = CachedResponse::fromResponse(
