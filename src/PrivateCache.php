@@ -138,6 +138,10 @@ final class PrivateCache implements ApplicationInterceptor
             $response = yield $client->request($request, $cancellationToken);
             \assert($response instanceof Response);
 
+            if (!$response->hasHeader('date')) {
+                $response = $response->withHeader('date', \gmdate('D, d M Y H:i:s') . ' GMT');
+            }
+
             $responseTime = now();
 
             $this->logger->debug('Received response in {response_duration_formatted} for #{request_id}', [
