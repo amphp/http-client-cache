@@ -2,14 +2,9 @@
 
 namespace Amp\Http\Client\Cache;
 
-use Amp\ByteStream\InputStream;
-use Amp\ByteStream\IteratorStream;
-use Amp\Emitter;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Message;
-use Amp\Promise;
-use function Amp\asyncCall;
 use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
 
@@ -184,11 +179,6 @@ function calculateAge(CachedResponse $response): int
     return $correctedInitialAge + $residentTime;
 }
 
-function getPrimaryCacheKey(Request $request): string
-{
-    return $request->getMethod() . ' ' . $request->getUri();
-}
-
 function now(): \DateTimeImmutable
 {
     /** @noinspection PhpUnhandledExceptionInspection */
@@ -217,52 +207,6 @@ function isStale(CachedResponse $response): bool
 function isFresh(CachedResponse $response)
 {
     return calculateFreshnessLifetime($response) > calculateAge($response);
-}
-
-function isCacheableRequestMethod(string $method): bool
-{
-    return \in_array($method, ['GET', 'HEAD'], true);
-}
-
-function isCacheableResponseCode(int $status): bool
-{
-    return \in_array($status, [200, 404, 410], true); // TODO Implement
-}
-
-/**
- * @param Response $response
- *
- * @return bool
- *
- * @see https://tools.ietf.org/html/rfc7234.html#section-3
- */
-function isCacheable(Response $response): bool
-{
-    $request = $response->getRequest();
-
-    if (!isCacheableRequestMethod($request->getMethod())) {
-        return false;
-    }
-
-    if (!isCacheableResponseCode($response->getStatus())) {
-        return false;
-    }
-
-    $requestHeader = parseCacheControlHeader($request);
-    if (isset($requestHeader['no-store'])) {
-        return false;
-    }
-
-    $responseHeader = parseCacheControlHeader($response);
-    if (isset($responseHeader['no-store'])) {
-        return false;
-    }
-
-    if (!isset($responseHeader['max-age']) && !$response->hasHeader('expires')) {
-        return false;
-    }
-
-    return true;
 }
 
 /**
@@ -311,42 +255,4 @@ function sortMessagesByDateHeader(array $responses): array
     });
 
     return $responses;
-}
-
-function createTeeStream(InputStream $inputStream, int $count = 2): array
-{
-    /** @var Emitter[] $emitters */
-    $emitters = [];
-    $streams = [];
-
-    for ($i = 0; $i < $count; $i++) {
-        $emitter = new Emitter;
-
-        $emitters[] = $emitter;
-        $streams[] = new IteratorStream($emitter->iterate());
-    }
-
-    asyncCall(static function () use ($inputStream, $emitters) {
-        try {
-            while (null !== $chunk = yield $inputStream->read()) {
-                $promises = [];
-
-                foreach ($emitters as $emitter) {
-                    $promises[] = $emitter->emit($chunk);
-                }
-
-                yield Promise\any($promises);
-            }
-
-            foreach ($emitters as $emitter) {
-                $emitter->complete();
-            }
-        } catch (\Throwable $e) {
-            foreach ($emitters as $emitter) {
-                $emitter->fail($e);
-            }
-        }
-    });
-
-    return $streams;
 }

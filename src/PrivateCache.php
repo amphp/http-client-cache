@@ -4,8 +4,10 @@ namespace Amp\Http\Client\Cache;
 
 use Amp\ByteStream\InMemoryStream;
 use Amp\ByteStream\InputStream;
+use Amp\ByteStream\IteratorStream;
 use Amp\Cache\Cache as StringCache;
 use Amp\CancellationToken;
+use Amp\Emitter;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\Client;
 use Amp\Http\Client\ConnectionInfo;
@@ -72,8 +74,8 @@ final class PrivateCache implements ApplicationInterceptor
 
             $responseTime = now();
 
-            if (isCacheable($response)) {
-                [$streamA, $streamB] = createTeeStream($response->getBody());
+            if ($this->isCacheable($response)) {
+                [$streamA, $streamB] = $this->createTeeStream($response->getBody());
 
                 $response = $response->withBody($streamA);
 
@@ -95,7 +97,7 @@ final class PrivateCache implements ApplicationInterceptor
                     $storedResponses = (yield $this->fetchStoredResponses($request)) ?? [];
                     $storedResponses[] = $responseToStore;
 
-                    yield $this->storeResponses(getPrimaryCacheKey($request), $storedResponses);
+                    yield $this->storeResponses($this->getPrimaryCacheKey($request), $storedResponses);
                 });
             }
 
@@ -122,7 +124,7 @@ final class PrivateCache implements ApplicationInterceptor
     private function fetchStoredResponses(Request $request): Promise
     {
         return call(function () use ($request) {
-            $rawCacheData = yield $this->cache->get(getPrimaryCacheKey($request));
+            $rawCacheData = yield $this->cache->get($this->getPrimaryCacheKey($request));
             if ($rawCacheData === null) {
                 return [];
             }
@@ -136,6 +138,11 @@ final class PrivateCache implements ApplicationInterceptor
 
             return $responses;
         });
+    }
+
+    private function getPrimaryCacheKey(Request $request): string
+    {
+        return $request->getMethod() . ' ' . $request->getUri();
     }
 
     private function storeResponses(string $cacheKey, array $responses): Promise
@@ -170,5 +177,104 @@ final class PrivateCache implements ApplicationInterceptor
     private function getBodyCacheKey(string $bodyHash): string
     {
         return 'body:' . $bodyHash;
+    }
+
+    /**
+     * @param string $method
+     *
+     * @return bool
+     *
+     * @see https://tools.ietf.org/html/rfc7231#section-4.2.3
+     */
+    private function isCacheableRequestMethod(string $method): bool
+    {
+        return \in_array($method, ['GET', 'HEAD'], true);
+    }
+
+    /**
+     * @param int $status
+     *
+     * @return bool
+     *
+     * @see https://tools.ietf.org/html/rfc7231.html#section-6.1
+     */
+    private function isCacheableResponseCode(int $status): bool
+    {
+        // exclude 206, because we don't support partial responses
+        return \in_array($status, [200, 203, 204, 300, 301, 404, 405, 410, 414, 501], true);
+    }
+
+    /**
+     * @param Response $response
+     *
+     * @return bool
+     *
+     * @see https://tools.ietf.org/html/rfc7234.html#section-3
+     */
+    private function isCacheable(Response $response): bool
+    {
+        $request = $response->getRequest();
+
+        if (!$this->isCacheableRequestMethod($request->getMethod())) {
+            return false;
+        }
+
+        if (!$this->isCacheableResponseCode($response->getStatus())) {
+            return false;
+        }
+
+        $requestHeader = parseCacheControlHeader($request);
+        if (isset($requestHeader['no-store'])) {
+            return false;
+        }
+
+        $responseHeader = parseCacheControlHeader($response);
+        if (isset($responseHeader['no-store'])) {
+            return false;
+        }
+
+        if (!isset($responseHeader['max-age']) && !$response->hasHeader('expires')) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function createTeeStream(InputStream $inputStream, int $count = 2): array
+    {
+        /** @var Emitter[] $emitters */
+        $emitters = [];
+        $streams = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $emitter = new Emitter;
+
+            $emitters[] = $emitter;
+            $streams[] = new IteratorStream($emitter->iterate());
+        }
+
+        asyncCall(static function () use ($inputStream, $emitters) {
+            try {
+                while (null !== $chunk = yield $inputStream->read()) {
+                    $promises = [];
+
+                    foreach ($emitters as $emitter) {
+                        $promises[] = $emitter->emit($chunk);
+                    }
+
+                    yield Promise\any($promises);
+                }
+
+                foreach ($emitters as $emitter) {
+                    $emitter->complete();
+                }
+            } catch (\Throwable $e) {
+                foreach ($emitters as $emitter) {
+                    $emitter->fail($e);
+                }
+            }
+        });
+
+        return $streams;
     }
 }
