@@ -22,6 +22,9 @@ use function Amp\call;
 
 final class PrivateCache implements ApplicationInterceptor
 {
+    /** @var string */
+    private $nextRequestId = 'a';
+
     /** @var StringCache */
     private $cache;
 
@@ -31,11 +34,35 @@ final class PrivateCache implements ApplicationInterceptor
     /** @var int */
     private $responseSizeLimit;
 
+    /** @var int */
+    private $requestCount = 0;
+
+    /** @var int */
+    private $hitCount = 0;
+
+    /** @var int */
+    private $networkCount = 0;
+
     public function __construct(StringCache $cache, ?PsrLogger $logger = null)
     {
         $this->cache = $cache;
         $this->logger = $logger ?? new NullLogger;
         $this->responseSizeLimit = 1 * 1024 * 1024; // 1MB
+    }
+
+    public function getRequestCount(): int
+    {
+        return $this->requestCount;
+    }
+
+    public function getHitCount(): int
+    {
+        return $this->hitCount;
+    }
+
+    public function getNetworkCount(): int
+    {
+        return $this->networkCount;
     }
 
     public function setResponseSizeLimit(int $limit): void
@@ -54,6 +81,8 @@ final class PrivateCache implements ApplicationInterceptor
         Client $next
     ): Promise {
         return call(function () use ($request, $cancellationToken, $next) {
+            $this->requestCount++;
+
             $responses = yield $this->fetchStoredResponses($request);
             $cachedResponse = selectStoredResponse($request, ...$responses);
 
@@ -62,12 +91,16 @@ final class PrivateCache implements ApplicationInterceptor
             }
 
             $cachedBody = yield $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
-            $validBodyHash = \hash('sha512', $cachedBody) !== $cachedResponse->getBodyHash();
+            $validBodyHash = \hash('sha512', $cachedBody) === $cachedResponse->getBodyHash();
 
             $requestHeader = parseCacheControlHeader($request);
             $responseHeader = parseCacheControlHeader($cachedResponse);
 
-            if ($cachedBody === null || $validBodyHash || isset($requestHeader['no-cache']) || isset($responseHeader['no-cache'])) {
+            if ($cachedBody === null || !$validBodyHash || isset($requestHeader['no-cache']) || isset($responseHeader['no-cache'])) {
+                if (!$validBodyHash) {
+                    $this->logger->warning('Cache entry modification detected, please make sure several cache users don\'t interfere with each other by using a PrefixCache to give individual users their own cache key space.');
+                }
+
                 return $this->fetchFreshResponse($next, $request, $cancellationToken);
             }
 
@@ -91,11 +124,15 @@ final class PrivateCache implements ApplicationInterceptor
                 ], new InMemoryStream, $request, new ConnectionInfo(new SocketAddress(''), new SocketAddress('')));
             }
 
-            $requestTime = now();
+            $this->networkCount++;
 
-            $this->logger->debug('Fetching fresh response', [
+            $requestTime = now();
+            $requestId = $this->nextRequestId++;
+
+            $this->logger->debug('Fetching fresh response for #{request_id}', [
                 'request_method' => $request->getMethod(),
                 'request_host' => (string) $request->getUri()->getHost(),
+                'request_id' => $requestId,
             ]);
 
             $response = yield $client->request($request, $cancellationToken);
@@ -103,10 +140,11 @@ final class PrivateCache implements ApplicationInterceptor
 
             $responseTime = now();
 
-            $this->logger->debug('Received response in {response_duration_formatted}', [
+            $this->logger->debug('Received response in {response_duration_formatted} for #{request_id}', [
                 'response_duration_formatted' => $this->formatDuration($responseTime, $requestTime),
                 'request_method' => $request->getMethod(),
                 'request_host' => (string) $request->getUri()->getHost(),
+                'request_id' => $requestId,
             ]);
 
             // Another interceptor might have modified the URI or method, don't cache then
@@ -179,6 +217,8 @@ final class PrivateCache implements ApplicationInterceptor
         Request $request,
         InputStream $bodyStream
     ): Response {
+        $this->hitCount++;
+
         $this->logger->debug('Serving response from cache', [
             'request_method' => $request->getMethod(),
             'request_host' => (string) $request->getUri()->getHost(),
