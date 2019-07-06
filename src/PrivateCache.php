@@ -49,10 +49,16 @@ final class PrivateCache implements ApplicationInterceptor
             }
 
             $cachedBody = yield $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
+            $validBodyHash = \hash('sha512', $cachedBody) !== $cachedResponse->getBodyHash();
 
-            if ($cachedBody === null || \hash('sha512', $cachedBody) !== $cachedResponse->getBodyHash()) {
+            $requestHeader = parseCacheControlHeader($request);
+            $responseHeader = parseCacheControlHeader($cachedResponse);
+
+            if ($cachedBody === null || $validBodyHash || isset($requestHeader['no-cache']) || isset($responseHeader['no-cache'])) {
                 return $this->fetchFreshResponse($next, $request, $cancellationToken);
             }
+
+            // TODO no-cache, requires validation
 
             $response = $this->createResponseFromCache($cachedResponse, $request, new InMemoryStream($cachedBody));
             $response = $response->withHeader('age', calculateAge($cachedResponse));
@@ -64,6 +70,14 @@ final class PrivateCache implements ApplicationInterceptor
     private function fetchFreshResponse(Client $client, Request $request, CancellationToken $cancellationToken): Promise
     {
         return call(function () use ($client, $request, $cancellationToken) {
+            $requestCacheControl = parseCacheControlHeader($request);
+
+            if (isset($requestCacheControl['only-if-cached'])) {
+                return new Response($request->getProtocolVersions()[0], 504, 'No stored response available', [
+                    'date' => [\gmdate('D, d M Y H:i:s') . ' GMT'],
+                ], new InMemoryStream, $request, new ConnectionInfo(new SocketAddress(''), new SocketAddress('')));
+            }
+
             $requestTime = now();
 
             $this->logger->debug('Fetching fresh response', [

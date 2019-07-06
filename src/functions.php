@@ -3,10 +3,10 @@
 namespace Amp\Http\Client\Cache;
 
 use Amp\Http\Client\Request;
-use Amp\Http\Client\Response;
 use Amp\Http\Message;
 use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
+use Amp\Socket\SocketAddress;
 
 /**
  * @param string|null $value
@@ -102,7 +102,11 @@ function parseCacheControlHeader(Message $message): array
         ];
 
         if (\in_array($key, $deltaSecondAttributes, true)) {
-            $value = parseDeltaSeconds($value) ?? 0;
+            if ($key === 'max-stale' && $value === '') {
+                $value = \PHP_INT_MAX;
+            } else {
+                $value = parseDeltaSeconds($value) ?? 0;
+            }
         } elseif (\in_array($key, $tokenOnlyAttributes, true)) {
             // no or invalid value given, ignore that fact
             $value = true;
@@ -213,18 +217,39 @@ function isFresh(CachedResponse $response)
  * @param Request        $request
  * @param CachedResponse ...$responses
  *
- * @return Response|null
+ * @return CachedResponse|null
  *
  * @see https://tools.ietf.org/html/rfc7234.html#section-4.1
  */
 function selectStoredResponse(Request $request, CachedResponse ...$responses): ?CachedResponse
 {
+    $requestCacheControl = parseCacheControlHeader($request);
+
     $responses = sortMessagesByDateHeader($responses);
 
     foreach ($responses as $response) {
-        // TODO Implement section 4.2.4 and 4.3 (serving stale responses and validation)
-        if (isStale($response)) {
-            continue;
+        $responseCacheControl = parseCacheControlHeader($response);
+
+        $age = calculateAge($response);
+        $lifetime = calculateFreshnessLifetime($response);
+
+        if (isset($requestCacheControl['max-age']) && $age > $requestCacheControl['max-age']) {
+            continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.1
+        }
+
+        if ($age >= $lifetime) { // stale
+            if (isset($responseCacheControl['must-revalidate'])) {
+                continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.2.1
+            }
+
+            $staleTime = $age - $lifetime;
+            if (!isset($requestCacheControl['max-stale']) || $staleTime >= $requestCacheControl['max-stale']) {
+                continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.2
+            }
+        }
+
+        if (isset($requestCacheControl['min-fresh']) && $age + $requestCacheControl['min-fresh'] >= $lifetime) {
+            continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.3
         }
 
         if (!$response->matches($request)) {
