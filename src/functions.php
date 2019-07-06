@@ -26,12 +26,19 @@ function parseDeltaSeconds(?string $value): ?int
         return null;
     }
 
-    if (\filter_var(
+    $filterResult = \filter_var(
         $value,
         \FILTER_VALIDATE_INT,
         ['options' => ['min_range' => 0, 'max_range' => \PHP_INT_MAX]]
-    ) !== false) {
+    );
+
+    if ($filterResult !== false) {
         return (int) $value;
+    }
+
+    /** @noinspection NotOptimalRegularExpressionsInspection */
+    if (\preg_match('/^[1-9][0-9]+$/', $value)) {
+        return \PHP_INT_MAX;
     }
 
     return null;
@@ -159,6 +166,7 @@ function calculateAge(CachedResponse $response): int
 {
     $date = parseDateHeader($response->getHeader('date'));
     if ($date === null) {
+        /** @noinspection PhpUndefinedClassInspection */
         throw new \AssertionError('Got a cached response without date header, which should never happen. Please report this as a bug.');
     }
 

@@ -19,6 +19,6 @@ class ParseDeltaSecondsTest extends TestCase
 
     public function testOverflow(): void
     {
-        self::assertNull(parseDeltaSeconds('9223372036854775808'));
+        self::assertSame(\PHP_INT_MAX, parseDeltaSeconds('9223372036854775808'));
     }
 }
