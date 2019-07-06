@@ -6,7 +6,6 @@ use Amp\Http\Client\Cache\PrivateCache;
 use Amp\Http\Client\ClientBuilder;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
-use Amp\Http\Rfc7230;
 use Amp\Log\ConsoleFormatter;
 use Amp\Log\StreamHandler;
 use Amp\Loop;
@@ -36,17 +35,22 @@ Loop::run(static function () {
 
     /** @var Response $response */
     $response = yield $client->request(new Request('https://api.github.com/users/kelunik'));
-
-    print Rfc7230::formatHeaders($response->getHeaders());
+    $requestId1 = $response->getHeader('x-github-request-id');
+    $logger->info('Received response: ' . $requestId1);
     yield $response->getBody()->buffer();
 
-    print "\r\n\r\n";
-
+    $logger->info('Waiting 3000 milliseconds before making another request...');
     yield new Delayed(3000);
 
     /** @var Response $response */
     $response = yield $client->request(new Request('https://api.github.com/users/kelunik'));
-
-    print Rfc7230::formatHeaders($response->getHeaders());
+    $requestId2 = $response->getHeader('x-github-request-id');
+    $logger->info('Received response: ' . $requestId2);
     yield $response->getBody()->buffer();
+
+    if ($requestId1 === $requestId2) {
+        $logger->info('Received the same request ID (cached response)');
+    } else {
+        $logger->info('Received another request ID (non-cached response)');
+    }
 });
