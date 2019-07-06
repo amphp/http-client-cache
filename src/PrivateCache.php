@@ -17,7 +17,7 @@ use function Amp\asyncCall;
 use function Amp\ByteStream\buffer;
 use function Amp\call;
 
-final class Cache implements ApplicationInterceptor
+final class PrivateCache implements ApplicationInterceptor
 {
     /** @var StringCache */
     private $cache;
