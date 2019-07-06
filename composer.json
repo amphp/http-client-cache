@@ -1,6 +1,6 @@
 {
     "name": "amphp/http-client-cache",
-    "description": "",
+    "description": "An async HTTP cache for Amp's HTTP client.",
     "type": "library",
     "require": {
         "php": ">=7.1",
