@@ -15,6 +15,8 @@ use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Promise;
 use Amp\Socket\SocketAddress;
+use Psr\Log\LoggerInterface as PsrLogger;
+use Psr\Log\NullLogger;
 use function Amp\asyncCall;
 use function Amp\ByteStream\buffer;
 use function Amp\call;
@@ -24,9 +26,13 @@ final class PrivateCache implements ApplicationInterceptor
     /** @var StringCache */
     private $cache;
 
-    public function __construct(StringCache $cache)
+    /** @var PsrLogger */
+    private $logger;
+
+    public function __construct(StringCache $cache, ?PsrLogger $logger = null)
     {
         $this->cache = $cache;
+        $this->logger = $logger ?? new NullLogger;
     }
 
     public function interceptApplicationRequest(
@@ -60,19 +66,32 @@ final class PrivateCache implements ApplicationInterceptor
         return call(function () use ($client, $request, $cancellationToken) {
             $requestTime = now();
 
+            $this->logger->debug('Fetching fresh response', [
+                'request_method' => $request->getMethod(),
+                'request_host' => (string) $request->getUri()->getHost(),
+            ]);
+
             $response = yield $client->request($request, $cancellationToken);
             \assert($response instanceof Response);
+
+            $responseTime = now();
+
+            $this->logger->debug('Received response in {response_duration_formatted}', [
+                'response_duration_formatted' => $this->formatDuration($responseTime, $requestTime),
+                'request_method' => $request->getMethod(),
+                'request_host' => (string) $request->getUri()->getHost(),
+            ]);
 
             // Another interceptor might have modified the URI or method, don't cache then
             $sameMethod = $response->getRequest()->getMethod() === $request->getMethod();
             $sameUri = (string) $response->getRequest()->getUri() === (string) $request->getUri();
 
             if (!$sameMethod || !$sameUri) {
-                // TODO: Log a warning that the original response has been modified and thus we can't cache
+                $this->logger->warning('Won\'t store response in cache, because request method or request URI have been modified by an interceptor. '
+                    . 'Please check whether you can move such an interceptor up in the chain, so the method and URI are modified before the cache is invoked.');
+
                 return $response;
             }
-
-            $responseTime = now();
 
             if ($this->isCacheable($response)) {
                 [$streamA, $streamB] = $this->createTeeStream($response->getBody());
@@ -80,24 +99,30 @@ final class PrivateCache implements ApplicationInterceptor
                 $response = $response->withBody($streamA);
 
                 asyncCall(function () use ($request, $response, $streamB, $requestTime, $responseTime) {
-                    $bufferedBody = yield buffer($streamB);
-                    $bodyHash = \hash('sha512', $bufferedBody);
+                    try {
+                        $bufferedBody = yield buffer($streamB);
+                        $bodyHash = \hash('sha512', $bufferedBody);
 
-                    $responseToStore = CachedResponse::fromResponse(
-                        $response->withRequest($request),
-                        $requestTime,
-                        $responseTime,
-                        $bodyHash
-                    );
+                        $responseToStore = CachedResponse::fromResponse(
+                            $response->withRequest($request),
+                            $requestTime,
+                            $responseTime,
+                            $bodyHash
+                        );
 
-                    $ttl = $this->calculateTtl([$responseToStore]);
+                        $ttl = $this->calculateTtl([$responseToStore]);
 
-                    yield $this->cache->set($this->getBodyCacheKey($bodyHash), $bufferedBody, $ttl);
+                        yield $this->cache->set($this->getBodyCacheKey($bodyHash), $bufferedBody, $ttl);
 
-                    $storedResponses = (yield $this->fetchStoredResponses($request)) ?? [];
-                    $storedResponses[] = $responseToStore;
+                        $storedResponses = (yield $this->fetchStoredResponses($request)) ?? [];
+                        $storedResponses[] = $responseToStore;
 
-                    yield $this->storeResponses($this->getPrimaryCacheKey($request), $storedResponses);
+                        yield $this->storeResponses($this->getPrimaryCacheKey($request), $storedResponses);
+                    } catch (\Throwable $e) {
+                        $this->logger->warning('Failed to store response in cache due to an exception', [
+                            'exception' => $e,
+                        ]);
+                    }
                 });
             }
 
@@ -110,6 +135,11 @@ final class PrivateCache implements ApplicationInterceptor
         Request $request,
         InputStream $bodyStream
     ): Response {
+        $this->logger->debug('Serving response from cache', [
+            'request_method' => $request->getMethod(),
+            'request_host' => (string) $request->getUri()->getHost(),
+        ]);
+
         return new Response(
             $cachedResponse->getProtocolVersion(),
             $cachedResponse->getStatus(),
@@ -276,5 +306,47 @@ final class PrivateCache implements ApplicationInterceptor
         });
 
         return $streams;
+    }
+
+    private function formatDuration(\DateTimeInterface $a, \DateTimeInterface $b): string
+    {
+        $diff = $a->diff($b, true);
+
+        $result = '';
+
+        if ($diff->y) {
+            $plural = $diff->y === 1 ? '' : 's';
+            $result .= $diff->format("%y year{$plural} ");
+        }
+
+        if ($diff->m) {
+            $plural = $diff->m === 1 ? '' : 's';
+            $result .= $diff->format("%m month{$plural} ");
+        }
+
+        if ($diff->d) {
+            $plural = $diff->d === 1 ? '' : 's';
+            $result .= $diff->format("%d day{$plural} ");
+        }
+
+        if ($diff->h) {
+            $plural = $diff->h === 1 ? '' : 's';
+            $result .= $diff->format("%h hour{$plural} ");
+        }
+
+        if ($diff->i) {
+            $plural = $diff->i === 1 ? '' : 's';
+            $result .= $diff->format("%i minute{$plural} ");
+        }
+
+        if ($diff->s) {
+            $plural = $diff->s === 1 ? '' : 's';
+            $result .= $diff->format("%s second{$plural} ");
+        }
+
+        $plural = $diff->f === 1 ? '' : 's';
+        $result .= \round($diff->f * 1000) . " millisecond{$plural}.";
+
+        return $result;
     }
 }

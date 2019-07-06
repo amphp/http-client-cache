@@ -9,11 +9,14 @@
         "amphp/amp": "^2.1",
         "amphp/http": "^1.3",
         "amphp/http-client": "dev-master as 4.0",
-        "amphp/cache": "^1.2"
+        "amphp/cache": "^1.2",
+        "psr/log": "^1.1"
     },
     "require-dev": {
         "phpunit/phpunit": "^8 | ^7",
-        "amphp/php-cs-fixer-config": "dev-master"
+        "amphp/php-cs-fixer-config": "dev-master",
+        "monolog/monolog": "^1.24",
+        "amphp/log": "^1.0"
     },
     "license": "MIT",
     "authors": [
