@@ -21,4 +21,9 @@ class ParseDeltaSecondsTest extends TestCase
     {
         self::assertSame(\PHP_INT_MAX, parseDeltaSeconds('9223372036854775808'));
     }
+
+    public function testNull(): void
+    {
+        self::assertNull(parseDeltaSeconds(null));
+    }
 }
