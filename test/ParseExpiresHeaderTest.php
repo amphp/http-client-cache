@@ -4,7 +4,7 @@ namespace Amp\Http\Client\Cache;
 
 use PHPUnit\Framework\TestCase;
 
-class ParseExpiresHeader extends TestCase
+class ParseExpiresHeaderTest extends TestCase
 {
     public function test(): void
     {

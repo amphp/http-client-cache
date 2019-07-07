@@ -81,7 +81,7 @@ function parseCacheControlHeader(Message $message): array
     $parsedComponents = createFieldValueComponentMap(parseFieldValueComponents($message, $header));
 
     if ($parsedComponents === null) {
-        return ['no-store' => ''];
+        return ['no-store' => true];
     }
 
     $cacheControl = [];

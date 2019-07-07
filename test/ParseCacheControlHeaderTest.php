@@ -31,6 +31,8 @@ class ParseCacheControlHeaderTest extends TestCase
         ], $this->parse('private, max-stale'));
 
         self::assertSame([], $this->parse('foobar'));
+
+        self::assertSame(['no-store' => true], $this->parse('foobar=1, foobar=2'));
     }
 
     private function parse(string $headerValue): array
