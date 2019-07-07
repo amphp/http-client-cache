@@ -147,7 +147,7 @@ function calculateFreshnessLifetime(CachedResponse $response): int
             return 0; // treat as expired
         }
 
-        return $expires->getTimestamp() - $date->getTimestamp();
+        return \max(0, $expires->getTimestamp() - $date->getTimestamp());
     }
 
     return 0; // treat as expired, we don't implement heuristic freshness for now
