@@ -16,7 +16,8 @@
         "phpunit/phpunit": "^8 | ^7",
         "amphp/php-cs-fixer-config": "dev-master",
         "monolog/monolog": "^1.24",
-        "amphp/log": "^1.0"
+        "amphp/log": "^1.0",
+        "amphp/phpunit-util": "^1.1"
     },
     "license": "MIT",
     "authors": [
