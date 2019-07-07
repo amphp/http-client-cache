@@ -45,7 +45,9 @@ class PrivateCacheTest extends AsyncTestCase
 
         yield $this->whenRequestIsExecuted();
 
+        $this->thenClientCallCountIsEqualTo(0);
         $this->thenResponseDoesNotContainHeader('age');
+        $this->thenResponseCodeIsEqualTo(504);
     }
 
     protected function setUp(): void
@@ -106,5 +108,10 @@ class PrivateCacheTest extends AsyncTestCase
     private function givenRequestHeader(string $field, string $value): void
     {
         $this->request = $this->request->withHeader($field, $value);
+    }
+
+    private function thenResponseCodeIsEqualTo(int $code): void
+    {
+        self::assertSame($code, $this->response->getStatus());
     }
 }
