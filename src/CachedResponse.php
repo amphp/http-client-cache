@@ -38,7 +38,10 @@ final class CachedResponse extends Message
     public static function fromCacheData(string $data): self
     {
         try {
-            $data = \json_decode($data, true, 4, \JSON_THROW_ON_ERROR);
+            $data = \json_decode($data, true, 4);
+            if ($data === null) {
+                throw new HttpException('Failed to decode cached data, JSON syntax error');
+            }
 
             if (!isset(
                 $data['protocol_version'],
@@ -139,7 +142,7 @@ final class CachedResponse extends Message
             'request_time' => $this->requestTime->getTimestamp(),
             'response_time' => $this->responseTime->getTimestamp(),
             'body_hash' => $this->bodyHash,
-        ], \JSON_THROW_ON_ERROR);
+        ]);
     }
 
     /**
