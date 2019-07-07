@@ -24,6 +24,13 @@ class ParseCacheControlHeaderTest extends TestCase
             'private' => true,
             'max-age' => 31536000,
         ], $this->parse('private="foo, bar", max-age=31536000'));
+
+        self::assertSame([
+            'private' => true,
+            'max-stale' => \PHP_INT_MAX,
+        ], $this->parse('private, max-stale'));
+
+        self::assertSame([], $this->parse('foobar'));
     }
 
     private function parse(string $headerValue): array

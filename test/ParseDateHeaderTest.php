@@ -9,5 +9,7 @@ class ParseDateHeaderTest extends TestCase
     public function test(): void
     {
         self::assertSame(786269551, parseDateHeader('Thu, 01 Dec 1994 08:12:31 GMT')->getTimestamp());
+        self::assertNull(parseDateHeader('Thu, 01 Dec 1994 08:12:31 CET'));
+        self::assertNull(parseDateHeader(null));
     }
 }
