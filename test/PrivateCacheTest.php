@@ -77,8 +77,15 @@ class PrivateCacheTest extends AsyncTestCase
                 {
                     $this->clientCallCount++;
 
-                    return new Success(new Response('1.1', 200, 'OK', [], new InMemoryStream('hello'), $request,
-                        new ConnectionInfo(new SocketAddress(''), new SocketAddress(''))));
+                    return new Success(new Response(
+                        '1.1',
+                        200,
+                        'OK',
+                        [],
+                        new InMemoryStream('hello'),
+                        $request,
+                        new ConnectionInfo(new SocketAddress(''), new SocketAddress(''))
+                    ));
                 }
 
                 public function addNetworkInterceptor(NetworkInterceptor $networkInterceptor): void
