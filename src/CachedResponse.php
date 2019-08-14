@@ -12,6 +12,7 @@ use function Amp\Http\parseFieldValueComponents;
 final class CachedResponse extends Message
 {
     public static function fromResponse(
+        Request $request,
         Response $response,
         \DateTimeImmutable $requestTime,
         \DateTimeImmutable $responseTime,
@@ -22,7 +23,7 @@ final class CachedResponse extends Message
             $response->getStatus(),
             $response->getReason(),
             $response->getHeaders(),
-            $response->getRequest(),
+            $request,
             $requestTime,
             $responseTime,
             $bodyHash
@@ -58,8 +59,8 @@ final class CachedResponse extends Message
                 throw new HttpException('Failed to decode cached data, expected key not present');
             }
 
-            $request = (new Request($data['request_target'], $data['request_method']))
-                ->withHeaders($data['request_vary']);
+            $request = new Request($data['request_target'], $data['request_method']);
+            $request->setHeaders($data['request_vary']);
 
             return new self(
                 $data['protocol_version'],

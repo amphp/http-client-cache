@@ -5,15 +5,12 @@ namespace Amp\Http\Client\Cache;
 use Amp\ByteStream\InMemoryStream;
 use Amp\Cache\NullCache;
 use Amp\CancellationToken;
+use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\Client;
-use Amp\Http\Client\ConnectionInfo;
-use Amp\Http\Client\Internal\ApplicationInterceptorClient;
-use Amp\Http\Client\NetworkInterceptor;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\PHPUnit\AsyncTestCase;
 use Amp\Promise;
-use Amp\Socket\SocketAddress;
 use Amp\Success;
 use function Amp\call;
 
@@ -65,7 +62,8 @@ class PrivateCacheTest extends AsyncTestCase
         return call(function () {
             $clientCallCount = &$this->clientCallCount;
 
-            $client = new class($clientCallCount) implements Client {
+            $countingInterceptor = new class($clientCallCount) implements ApplicationInterceptor
+            {
                 private $clientCallCount;
 
                 public function __construct(int &$clientCallCount)
@@ -73,7 +71,7 @@ class PrivateCacheTest extends AsyncTestCase
                     $this->clientCallCount = &$clientCallCount;
                 }
 
-                public function request(Request $request, CancellationToken $cancellation = null): Promise
+                public function request(Request $request, CancellationToken $cancellation, Client $client): Promise
                 {
                     $this->clientCallCount++;
 
@@ -83,18 +81,14 @@ class PrivateCacheTest extends AsyncTestCase
                         'OK',
                         [],
                         new InMemoryStream('hello'),
-                        $request,
-                        new ConnectionInfo(new SocketAddress(''), new SocketAddress(''))
+                        $request
                     ));
-                }
-
-                public function addNetworkInterceptor(NetworkInterceptor $networkInterceptor): void
-                {
-                    throw new \RuntimeException('Method not supported');
                 }
             };
 
-            $client = new ApplicationInterceptorClient($client, $this->cache);
+            $client = new Client;
+            $client->addApplicationInterceptor($this->cache);
+            $client->addApplicationInterceptor($countingInterceptor);
 
             $response = yield $client->request($this->request);
 
@@ -114,7 +108,7 @@ class PrivateCacheTest extends AsyncTestCase
 
     private function givenRequestHeader(string $field, string $value): void
     {
-        $this->request = $this->request->withHeader($field, $value);
+        $this->request->setHeader($field, $value);
     }
 
     private function thenResponseCodeIsEqualTo(int $code): void

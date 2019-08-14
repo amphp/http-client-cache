@@ -10,11 +10,9 @@ use Amp\CancellationToken;
 use Amp\Emitter;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\Client;
-use Amp\Http\Client\ConnectionInfo;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Promise;
-use Amp\Socket\SocketAddress;
 use Psr\Log\LoggerInterface as PsrLogger;
 use Psr\Log\NullLogger;
 use function Amp\asyncCall;
@@ -75,25 +73,27 @@ final class PrivateCache implements ApplicationInterceptor
         return $this->responseSizeLimit;
     }
 
-    public function interceptApplicationRequest(
+    public function request(
         Request $request,
-        CancellationToken $cancellationToken,
-        Client $next
+        CancellationToken $cancellation,
+        Client $client
     ): Promise {
-        return call(function () use ($request, $cancellationToken, $next) {
+        return call(function () use ($request, $cancellation, $client) {
             $this->requestCount++;
 
-            $responses = yield $this->fetchStoredResponses($request);
-            $cachedResponse = selectStoredResponse($request, ...$responses);
+            $originalRequest = clone $request;
+
+            $responses = yield $this->fetchStoredResponses($originalRequest);
+            $cachedResponse = selectStoredResponse($originalRequest, ...$responses);
 
             if ($cachedResponse === null) {
-                return $this->fetchFreshResponse($next, $request, $cancellationToken);
+                return $this->fetchFreshResponse($client, $request, $cancellation);
             }
 
             $cachedBody = yield $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
             $validBodyHash = \hash('sha512', $cachedBody) === $cachedResponse->getBodyHash();
 
-            $requestHeader = parseCacheControlHeader($request);
+            $requestHeader = parseCacheControlHeader($originalRequest);
             $responseHeader = parseCacheControlHeader($cachedResponse);
 
             if ($cachedBody === null || !$validBodyHash || isset($requestHeader['no-cache']) || isset($responseHeader['no-cache'])) {
@@ -101,59 +101,61 @@ final class PrivateCache implements ApplicationInterceptor
                     $this->logger->warning('Cache entry modification detected, please make sure several cache users don\'t interfere with each other by using a PrefixCache to give individual users their own cache key space.');
                 }
 
-                return $this->fetchFreshResponse($next, $request, $cancellationToken);
+                return $this->fetchFreshResponse($client, $request, $cancellation);
             }
 
             // TODO no-cache, requires validation
 
-            $response = $this->createResponseFromCache($cachedResponse, $request, new InMemoryStream($cachedBody));
-            $response = $response->withHeader('age', calculateAge($cachedResponse));
+            $response = $this->createResponseFromCache($cachedResponse, $originalRequest,
+                new InMemoryStream($cachedBody));
+            $response->setHeader('age', calculateAge($cachedResponse));
 
             return $response;
         });
     }
 
-    private function fetchFreshResponse(Client $client, Request $request, CancellationToken $cancellationToken): Promise
+    private function fetchFreshResponse(Client $client, Request $request, CancellationToken $cancellation): Promise
     {
-        return call(function () use ($client, $request, $cancellationToken) {
+        return call(function () use ($client, $request, $cancellation) {
             $requestCacheControl = parseCacheControlHeader($request);
 
             if (isset($requestCacheControl['only-if-cached'])) {
                 return new Response($request->getProtocolVersions()[0], 504, 'No stored response available', [
                     'date' => [\gmdate('D, d M Y H:i:s') . ' GMT'],
-                ], new InMemoryStream, $request, new ConnectionInfo(new SocketAddress(''), new SocketAddress('')));
+                ], new InMemoryStream, $request);
             }
 
             $this->networkCount++;
 
             $requestTime = now();
             $requestId = $this->nextRequestId++;
+            $originalRequest = clone $request;
 
             $this->logger->debug('Fetching fresh response for #{request_id}', [
-                'request_method' => $request->getMethod(),
-                'request_host' => (string) $request->getUri()->getHost(),
+                'request_method' => $originalRequest->getMethod(),
+                'request_host' => (string) $originalRequest->getUri()->getHost(),
                 'request_id' => $requestId,
             ]);
 
-            $response = yield $client->request($request, $cancellationToken);
+            $response = yield $client->request($request, $cancellation);
             \assert($response instanceof Response);
 
             if (!$response->hasHeader('date')) {
-                $response = $response->withHeader('date', \gmdate('D, d M Y H:i:s') . ' GMT');
+                $response->setHeader('date', \gmdate('D, d M Y H:i:s') . ' GMT');
             }
 
             $responseTime = now();
 
             $this->logger->debug('Received response in {response_duration_formatted} for #{request_id}', [
                 'response_duration_formatted' => $this->formatDuration($responseTime, $requestTime),
-                'request_method' => $request->getMethod(),
-                'request_host' => (string) $request->getUri()->getHost(),
+                'request_method' => $originalRequest->getMethod(),
+                'request_host' => (string) $originalRequest->getUri()->getHost(),
                 'request_id' => $requestId,
             ]);
 
             // Another interceptor might have modified the URI or method, don't cache then
-            $sameMethod = $response->getRequest()->getMethod() === $request->getMethod();
-            $sameUri = (string) $response->getRequest()->getUri() === (string) $request->getUri();
+            $sameMethod = $response->getRequest()->getMethod() === $originalRequest->getMethod();
+            $sameUri = (string) $response->getRequest()->getUri() === (string) $originalRequest->getUri();
 
             if (!$sameMethod || !$sameUri) {
                 $this->logger->warning('Won\'t store response in cache, because request method or request URI have been modified by an interceptor. '
@@ -165,7 +167,7 @@ final class PrivateCache implements ApplicationInterceptor
             if ($this->isCacheable($response)) {
                 [$streamA, $streamB] = $this->createTeeStream($response->getBody());
 
-                $response = $response->withBody($streamA);
+                $response->setBody($streamA);
 
                 asyncCall(function () use ($request, $response, $streamB, $requestTime, $responseTime) {
                     try {
@@ -190,7 +192,8 @@ final class PrivateCache implements ApplicationInterceptor
                         $bodyHash = \hash('sha512', $bufferedBody);
 
                         $responseToStore = CachedResponse::fromResponse(
-                            $response->withRequest($request),
+                            $request,
+                            $response,
                             $requestTime,
                             $responseTime,
                             $bodyHash
@@ -234,8 +237,7 @@ final class PrivateCache implements ApplicationInterceptor
             $cachedResponse->getReason(),
             $cachedResponse->getHeaders(),
             $bodyStream,
-            $request,
-            new ConnectionInfo(new SocketAddress(''), new SocketAddress(''))
+            $request
         );
     }
 

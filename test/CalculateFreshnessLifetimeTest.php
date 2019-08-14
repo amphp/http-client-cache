@@ -3,10 +3,8 @@
 namespace Amp\Http\Client\Cache;
 
 use Amp\ByteStream\InMemoryStream;
-use Amp\Http\Client\ConnectionInfo;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
-use Amp\Socket\SocketAddress;
 use PHPUnit\Framework\TestCase;
 
 class CalculateFreshnessLifetimeTest extends TestCase
@@ -62,11 +60,10 @@ class CalculateFreshnessLifetimeTest extends TestCase
 
     protected function whenFreshnessLifetimeIsCalculated(): void
     {
-        $connectionInfo = new ConnectionInfo(new SocketAddress(''), new SocketAddress(''));
         $request = new Request('https://example.org/');
-        $response = new Response('1.1', 200, 'OK', $this->headers, new InMemoryStream, $request, $connectionInfo);
+        $response = new Response('1.1', 200, 'OK', $this->headers, new InMemoryStream, $request);
 
-        $cachedResponse = CachedResponse::fromResponse($response, now(), now(), 'abc');
+        $cachedResponse = CachedResponse::fromResponse($request, $response, now(), now(), 'abc');
 
         $this->result = calculateFreshnessLifetime($cachedResponse);
     }
