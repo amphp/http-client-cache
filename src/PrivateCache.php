@@ -106,8 +106,11 @@ final class PrivateCache implements ApplicationInterceptor
 
             // TODO no-cache, requires validation
 
-            $response = $this->createResponseFromCache($cachedResponse, $originalRequest,
-                new InMemoryStream($cachedBody));
+            $response = $this->createResponseFromCache(
+                $cachedResponse,
+                $originalRequest,
+                new InMemoryStream($cachedBody)
+            );
             $response->setHeader('age', calculateAge($cachedResponse));
 
             return $response;

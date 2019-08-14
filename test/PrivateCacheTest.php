@@ -62,8 +62,7 @@ class PrivateCacheTest extends AsyncTestCase
         return call(function () {
             $clientCallCount = &$this->clientCallCount;
 
-            $countingInterceptor = new class($clientCallCount) implements ApplicationInterceptor
-            {
+            $countingInterceptor = new class($clientCallCount) implements ApplicationInterceptor {
                 private $clientCallCount;
 
                 public function __construct(int &$clientCallCount)
