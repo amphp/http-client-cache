@@ -3,7 +3,7 @@
 namespace Amp\Http\Client\Cache;
 
 use Amp\ByteStream\InMemoryStream;
-use Amp\Cache\NullCache;
+use Amp\Cache\ArrayCache;
 use Amp\CancellationToken;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\DelegateHttpClient;
@@ -29,11 +29,44 @@ class PrivateCacheTest extends AsyncTestCase
     /** @var int */
     private $clientCallCount;
 
+    /** @var string */
+    private $responseBody = 'hello';
+
     public function testFreshResponse(): \Generator
     {
         yield $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(1);
+        $this->thenResponseDoesNotContainHeader('age');
+    }
+
+    public function testCachedResponse(): \Generator
+    {
+        yield $this->whenRequestIsExecuted();
+
+        $this->thenClientCallCountIsEqualTo(1);
+        $this->thenResponseCodeIsEqualTo(200);
+        yield $this->thenResponseBodyIs($this->responseBody);
+
+        yield $this->whenRequestIsExecuted();
+
+        $this->thenClientCallCountIsEqualTo(1);
+        $this->thenResponseContainsHeader('age');
+        yield $this->thenResponseBodyIs($this->responseBody);
+    }
+
+    public function testLargeResponseNotCached(): \Generator
+    {
+        $this->givenLargeResponse();
+
+        yield $this->whenRequestIsExecuted();
+
+        $this->thenClientCallCountIsEqualTo(1);
+        $this->thenResponseCodeIsEqualTo(200);
+
+        yield $this->whenRequestIsExecuted();
+
+        $this->thenClientCallCountIsEqualTo(2);
         $this->thenResponseDoesNotContainHeader('age');
     }
 
@@ -52,7 +85,7 @@ class PrivateCacheTest extends AsyncTestCase
     {
         parent::setUp();
 
-        $this->cache = new PrivateCache(new NullCache);
+        $this->cache = new PrivateCache(new ArrayCache);
         $this->clientCallCount = 0;
 
         $this->request = new Request('https://example.org/');
@@ -63,24 +96,29 @@ class PrivateCacheTest extends AsyncTestCase
         return call(function () {
             $clientCallCount = &$this->clientCallCount;
 
-            $countingInterceptor = new class($clientCallCount) implements ApplicationInterceptor {
+            $countingInterceptor = new class($clientCallCount, $this->responseBody) implements ApplicationInterceptor
+            {
                 private $clientCallCount;
 
-                public function __construct(int &$clientCallCount)
+                public function __construct(int &$clientCallCount, string $responseBody)
                 {
                     $this->clientCallCount = &$clientCallCount;
+                    $this->responseBody = $responseBody;
                 }
 
-                public function request(Request $request, CancellationToken $cancellation, DelegateHttpClient $client): Promise
-                {
+                public function request(
+                    Request $request,
+                    CancellationToken $cancellation,
+                    DelegateHttpClient $client
+                ): Promise {
                     $this->clientCallCount++;
 
                     return new Success(new Response(
                         '1.1',
                         200,
                         'OK',
-                        [],
-                        new InMemoryStream('hello'),
+                        ['cache-control' => 'max-age=60'],
+                        new InMemoryStream($this->responseBody),
                         $request
                     ));
                 }
@@ -115,5 +153,22 @@ class PrivateCacheTest extends AsyncTestCase
     private function thenResponseCodeIsEqualTo(int $code): void
     {
         self::assertSame($code, $this->response->getStatus());
+    }
+
+    private function thenResponseContainsHeader(string $field): void
+    {
+        self::assertTrue($this->response->hasHeader($field));
+    }
+
+    private function givenLargeResponse(): void
+    {
+        $this->responseBody = \str_repeat('.', 1024 * 1024 + 1);
+    }
+
+    private function thenResponseBodyIs(string $responseBody): Promise
+    {
+        return call(function () use ($responseBody) {
+            self::assertSame($responseBody, yield $this->response->getBody()->buffer());
+        });
     }
 }
