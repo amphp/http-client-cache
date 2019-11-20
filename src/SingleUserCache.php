@@ -24,8 +24,8 @@ use function Amp\Http\formatDateHeader;
 
 final class SingleUserCache implements ApplicationInterceptor
 {
-    /** @var string */
-    private $nextRequestId = 'a';
+    /** @var int */
+    private $nextRequestId = 1;
 
     /** @var Cache */
     private $cache;
@@ -406,7 +406,7 @@ final class SingleUserCache implements ApplicationInterceptor
         }
 
         $plural = $diff->f === 1 ? '' : 's';
-        $result .= \round($diff->f * 1000) . " millisecond{$plural}.";
+        $result .= \round($diff->f * 1000) . " millisecond{$plural}";
 
         return $result;
     }
@@ -414,7 +414,7 @@ final class SingleUserCache implements ApplicationInterceptor
     private function storeResponse(
         Request $originalRequest,
         Response $response,
-        string $requestId,
+        int $requestId,
         \DateTimeImmutable $requestTime
     ): Promise {
         return call(function () use ($originalRequest, $response, $requestId, $requestTime) {
