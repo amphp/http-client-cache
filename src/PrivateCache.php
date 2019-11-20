@@ -5,11 +5,11 @@ namespace Amp\Http\Client\Cache;
 use Amp\ByteStream\InMemoryStream;
 use Amp\ByteStream\InputStream;
 use Amp\ByteStream\IteratorStream;
-use Amp\Cache\Cache as StringCache;
+use Amp\Cache\Cache;
 use Amp\CancellationToken;
 use Amp\Emitter;
 use Amp\Http\Client\ApplicationInterceptor;
-use Amp\Http\Client\Client;
+use Amp\Http\Client\DelegateHttpClient;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Promise;
@@ -23,7 +23,7 @@ final class PrivateCache implements ApplicationInterceptor
     /** @var string */
     private $nextRequestId = 'a';
 
-    /** @var StringCache */
+    /** @var Cache */
     private $cache;
 
     /** @var PsrLogger */
@@ -41,7 +41,7 @@ final class PrivateCache implements ApplicationInterceptor
     /** @var int */
     private $networkCount = 0;
 
-    public function __construct(StringCache $cache, ?PsrLogger $logger = null)
+    public function __construct(Cache $cache, ?PsrLogger $logger = null)
     {
         $this->cache = $cache;
         $this->logger = $logger ?? new NullLogger;
@@ -76,7 +76,7 @@ final class PrivateCache implements ApplicationInterceptor
     public function request(
         Request $request,
         CancellationToken $cancellation,
-        Client $client
+        DelegateHttpClient $client
     ): Promise {
         return call(function () use ($request, $cancellation, $client) {
             $this->requestCount++;
@@ -117,7 +117,7 @@ final class PrivateCache implements ApplicationInterceptor
         });
     }
 
-    private function fetchFreshResponse(Client $client, Request $request, CancellationToken $cancellation): Promise
+    private function fetchFreshResponse(DelegateHttpClient $client, Request $request, CancellationToken $cancellation): Promise
     {
         return call(function () use ($client, $request, $cancellation) {
             $requestCacheControl = parseCacheControlHeader($request);

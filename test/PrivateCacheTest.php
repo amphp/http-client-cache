@@ -6,7 +6,8 @@ use Amp\ByteStream\InMemoryStream;
 use Amp\Cache\NullCache;
 use Amp\CancellationToken;
 use Amp\Http\Client\ApplicationInterceptor;
-use Amp\Http\Client\Client;
+use Amp\Http\Client\DelegateHttpClient;
+use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\PHPUnit\AsyncTestCase;
@@ -70,7 +71,7 @@ class PrivateCacheTest extends AsyncTestCase
                     $this->clientCallCount = &$clientCallCount;
                 }
 
-                public function request(Request $request, CancellationToken $cancellation, Client $client): Promise
+                public function request(Request $request, CancellationToken $cancellation, DelegateHttpClient $client): Promise
                 {
                     $this->clientCallCount++;
 
@@ -85,9 +86,10 @@ class PrivateCacheTest extends AsyncTestCase
                 }
             };
 
-            $client = new Client;
-            $client->addApplicationInterceptor($this->cache);
-            $client->addApplicationInterceptor($countingInterceptor);
+            $client = (new HttpClientBuilder)
+                ->intercept($this->cache)
+                ->intercept($countingInterceptor)
+                ->build();
 
             $response = yield $client->request($this->request);
 
