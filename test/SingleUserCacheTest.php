@@ -57,7 +57,7 @@ class SingleUserCacheTest extends AsyncTestCase
 
     public function testLargeResponseNotCached(): \Generator
     {
-        $this->givenLargeResponse();
+        $this->givenResponseBodySize(1024 * 1024 + 1);
 
         yield $this->whenRequestIsExecuted();
 
@@ -68,6 +68,15 @@ class SingleUserCacheTest extends AsyncTestCase
 
         $this->thenClientCallCountIsEqualTo(2);
         $this->thenResponseDoesNotContainHeader('age');
+    }
+
+    public function testVeryLargeResponseBodyConsumedFine(): \Generator
+    {
+        $this->givenResponseBodySize(1024 * 1024 * 2);
+
+        yield $this->whenRequestIsExecuted();
+
+        yield $this->thenResponseBodyIs($this->responseBody);
     }
 
     public function testOnlyIfCached(): \Generator
@@ -159,9 +168,9 @@ class SingleUserCacheTest extends AsyncTestCase
         self::assertTrue($this->response->hasHeader($field));
     }
 
-    private function givenLargeResponse(): void
+    private function givenResponseBodySize(int $size): void
     {
-        $this->responseBody = \str_repeat('.', 1024 * 1024 + 1);
+        $this->responseBody = \str_repeat('.', $size);
     }
 
     private function thenResponseBodyIs(string $responseBody): Promise
