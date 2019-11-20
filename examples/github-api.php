@@ -2,8 +2,8 @@
 
 use Amp\Cache\ArrayCache;
 use Amp\Delayed;
-use Amp\Http\Client\Cache\PrivateCache;
-use Amp\Http\Client\ClientBuilder;
+use Amp\Http\Client\Cache\SingleUserCache;
+use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Log\ConsoleFormatter;
@@ -29,8 +29,8 @@ Loop::run(static function () {
 
     $cache = new ArrayCache;
 
-    $client = (new ClientBuilder)
-        ->addApplicationInterceptor(new PrivateCache($cache, $logger))
+    $client = (new HttpClientBuilder)
+        ->intercept(new SingleUserCache($cache, $logger))
         ->build();
 
     /** @var Response $response */

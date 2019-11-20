@@ -15,7 +15,7 @@ use Amp\Promise;
 use Amp\Success;
 use function Amp\call;
 
-class PrivateCacheTest extends AsyncTestCase
+class SingleUserCacheTest extends AsyncTestCase
 {
     /** @var Request */
     private $request;
@@ -23,7 +23,7 @@ class PrivateCacheTest extends AsyncTestCase
     /** @var Response */
     private $response;
 
-    /** @var PrivateCache */
+    /** @var SingleUserCache */
     private $cache;
 
     /** @var int */
@@ -85,7 +85,7 @@ class PrivateCacheTest extends AsyncTestCase
     {
         parent::setUp();
 
-        $this->cache = new PrivateCache(new ArrayCache);
+        $this->cache = new SingleUserCache(new ArrayCache);
         $this->clientCallCount = 0;
 
         $this->request = new Request('https://example.org/');
@@ -96,8 +96,7 @@ class PrivateCacheTest extends AsyncTestCase
         return call(function () {
             $clientCallCount = &$this->clientCallCount;
 
-            $countingInterceptor = new class($clientCallCount, $this->responseBody) implements ApplicationInterceptor
-            {
+            $countingInterceptor = new class($clientCallCount, $this->responseBody) implements ApplicationInterceptor {
                 private $clientCallCount;
 
                 public function __construct(int &$clientCallCount, string $responseBody)

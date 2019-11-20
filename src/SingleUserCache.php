@@ -22,7 +22,7 @@ use function Amp\asyncCall;
 use function Amp\call;
 use function Amp\Http\formatDateHeader;
 
-final class PrivateCache implements ApplicationInterceptor
+final class SingleUserCache implements ApplicationInterceptor
 {
     /** @var string */
     private $nextRequestId = 'a';
@@ -476,8 +476,10 @@ final class PrivateCache implements ApplicationInterceptor
                         $storedResponses = yield $this->fetchStoredResponses($response->getRequest());
                         $storedResponses[] = $responseToStore;
 
-                        yield $this->storeResponses($this->getPrimaryCacheKey($response->getRequest()),
-                            $storedResponses);
+                        yield $this->storeResponses(
+                            $this->getPrimaryCacheKey($response->getRequest()),
+                            $storedResponses
+                        );
                     } catch (\Throwable $e) {
                         $this->logger->warning('Failed to store response in cache due to an exception', [
                             'exception' => $e,
