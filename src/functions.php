@@ -130,8 +130,8 @@ function calculateFreshnessLifetime(CachedResponse $response): int
 {
     $cacheControl = parseCacheControlHeader($response);
 
-    if (isset($cacheControl[ResponseCacheControlDirective::MAX_AGE])) {
-        return $cacheControl[ResponseCacheControlDirective::MAX_AGE];
+    if (isset($cacheControl[ResponseCacheControl::MAX_AGE])) {
+        return $cacheControl[ResponseCacheControl::MAX_AGE];
     }
 
     if ($response->hasHeader('expires')) {
@@ -232,22 +232,22 @@ function selectStoredResponse(Request $request, CachedResponse ...$responses): ?
         $age = calculateAge($response);
         $lifetime = calculateFreshnessLifetime($response);
 
-        if (isset($requestCacheControl['max-age']) && $age > $requestCacheControl['max-age']) {
+        if (isset($requestCacheControl[ResponseCacheControl::MAX_AGE]) && $age > $requestCacheControl[RequestCacheControl::MAX_AGE]) {
             continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.1
         }
 
         if ($age >= $lifetime) { // stale
-            if (isset($responseCacheControl['must-revalidate'])) {
+            if (isset($responseCacheControl[ResponseCacheControl::MUST_REVALIDATE])) {
                 continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.2.1
             }
 
             $staleTime = $age - $lifetime;
-            if (!isset($requestCacheControl['max-stale']) || $staleTime >= $requestCacheControl['max-stale']) {
+            if (!isset($requestCacheControl[RequestCacheControl::MAX_STALE]) || $staleTime >= $requestCacheControl[RequestCacheControl::MAX_STALE]) {
                 continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.2
             }
         }
 
-        if (isset($requestCacheControl['min-fresh']) && $age + $requestCacheControl['min-fresh'] >= $lifetime) {
+        if (isset($requestCacheControl[RequestCacheControl::MIN_FRESH]) && $age + $requestCacheControl[RequestCacheControl::MIN_FRESH] >= $lifetime) {
             continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.3
         }
 

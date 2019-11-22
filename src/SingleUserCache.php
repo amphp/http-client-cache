@@ -9,6 +9,7 @@ use Amp\Cache\Cache;
 use Amp\CancellationToken;
 use Amp\CancellationTokenSource;
 use Amp\CancelledException;
+use Amp\Deferred;
 use Amp\Emitter;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\DelegateHttpClient;
@@ -45,6 +46,12 @@ final class SingleUserCache implements ApplicationInterceptor
     /** @var int */
     private $networkCount = 0;
 
+    /** @var Promise[] */
+    private $pushLocks = [];
+
+    /** @var bool */
+    private $storePushedResponses = true;
+
     public function __construct(Cache $cache, ?PsrLogger $logger = null)
     {
         $this->cache = $cache;
@@ -77,6 +84,11 @@ final class SingleUserCache implements ApplicationInterceptor
         return $this->responseSizeLimit;
     }
 
+    public function setStorePushedResponses(bool $store): void
+    {
+        $this->storePushedResponses = $store;
+    }
+
     public function request(
         Request $request,
         CancellationToken $cancellation,
@@ -84,6 +96,57 @@ final class SingleUserCache implements ApplicationInterceptor
     ): Promise {
         return call(function () use ($request, $cancellation, $client) {
             $this->requestCount++;
+
+            if ($this->storePushedResponses) {
+                $originalPushHandler = $request->getPushHandler();
+                $request->setPushHandler(function (Request $request, Promise $response) use ($originalPushHandler) {
+                    $requestTime = now();
+                    $requestId = $this->nextRequestId++;
+
+                    $deferred = new Deferred;
+                    $pushLockKey = $this->getPushLockKey($request);
+
+                    if (!isset($this->pushLocks[$pushLockKey])) {
+                        $this->pushLocks[$pushLockKey] = $deferred->promise();
+                    }
+
+                    try {
+                        $this->logger->debug('Received pushed request for #{request_id}', [
+                            'request_method' => $request->getMethod(),
+                            'request_uri' => (string) $request->getUri()->withUserInfo(''),
+                            'request_id' => $requestId,
+                        ]);
+
+                        $response = call(function () use ($request, $response, $requestId, $requestTime, $deferred) {
+                            /** @var Response $response */
+                            $response = yield $response;
+
+                            $response->getTrailers()->onResolve(static function () use ($deferred) {
+                                $deferred->resolve();
+                            });
+
+                            return $this->storeResponse($request, $response, $requestId, $requestTime, true);
+                        });
+
+                        if ($originalPushHandler) {
+                            return $originalPushHandler($request, $response);
+                        }
+
+                        return $response;
+                    } catch (\Throwable $e) {
+                        $deferred->resolve();
+
+                        throw $e;
+                    }
+                });
+
+                $pushLockKey = $this->getPushLockKey($request);
+
+                // Await pushed responses if they're already in-flight
+                if (isset($this->pushLocks[$pushLockKey])) {
+                    yield $this->pushLocks[$pushLockKey];
+                }
+            }
 
             $originalRequest = clone $request;
 
@@ -107,7 +170,7 @@ final class SingleUserCache implements ApplicationInterceptor
             $requestHeader = parseCacheControlHeader($originalRequest);
             $responseHeader = parseCacheControlHeader($cachedResponse);
 
-            if (!$validBodyHash || isset($requestHeader['no-cache']) || isset($responseHeader['no-cache'])) {
+            if (!$validBodyHash || isset($requestHeader[RequestCacheControl::NO_CACHE]) || isset($responseHeader[ResponseCacheControl::NO_CACHE])) {
                 return $this->fetchFreshResponse($client, $request, $cancellation);
             }
 
@@ -133,7 +196,7 @@ final class SingleUserCache implements ApplicationInterceptor
         return call(function () use ($client, $request, $cancellation) {
             $requestCacheControl = parseCacheControlHeader($request);
 
-            if (isset($requestCacheControl['only-if-cached'])) {
+            if (isset($requestCacheControl[RequestCacheControl::ONLY_IF_CACHED])) {
                 return new Response($request->getProtocolVersions()[0], 504, 'No stored response available', [
                     'date' => [formatDateHeader()],
                 ], new InMemoryStream, $request);
@@ -147,7 +210,7 @@ final class SingleUserCache implements ApplicationInterceptor
 
             $this->logger->debug('Fetching fresh response for #{request_id}', [
                 'request_method' => $originalRequest->getMethod(),
-                'request_host' => (string) $originalRequest->getUri()->getHost(),
+                'request_uri' => (string) $originalRequest->getUri()->withUserInfo(''),
                 'request_id' => $requestId,
             ]);
 
@@ -168,7 +231,7 @@ final class SingleUserCache implements ApplicationInterceptor
 
         $this->logger->debug('Serving response from cache', [
             'request_method' => $request->getMethod(),
-            'request_host' => (string) $request->getUri()->getHost(),
+            'request_uri' => (string) $request->getUri()->withUserInfo(''),
         ]);
 
         return new Response(
@@ -284,16 +347,16 @@ final class SingleUserCache implements ApplicationInterceptor
         }
 
         $requestHeader = parseCacheControlHeader($request);
-        if (isset($requestHeader['no-store'])) {
+        if (isset($requestHeader[RequestCacheControl::NO_STORE])) {
             return false;
         }
 
         $responseHeader = parseCacheControlHeader($response);
-        if (isset($responseHeader['no-store'])) {
+        if (isset($responseHeader[ResponseCacheControl::NO_STORE])) {
             return false;
         }
 
-        if (!isset($responseHeader['max-age']) && !$response->hasHeader('expires')) {
+        if (!isset($responseHeader[ResponseCacheControl::MAX_AGE]) && !$response->hasHeader('expires')) {
             return false;
         }
 
@@ -415,19 +478,21 @@ final class SingleUserCache implements ApplicationInterceptor
         Request $originalRequest,
         Response $response,
         int $requestId,
-        \DateTimeImmutable $requestTime
+        \DateTimeImmutable $requestTime,
+        bool $pushed = false
     ): Promise {
-        return call(function () use ($originalRequest, $response, $requestId, $requestTime) {
+        return call(function () use ($originalRequest, $response, $requestId, $requestTime, $pushed) {
             if (!$response->hasHeader('date')) {
                 $response->setHeader('date', formatDateHeader());
             }
 
             $responseTime = now();
 
-            $this->logger->debug('Received response in {response_duration_formatted} for #{request_id}', [
+            $message = 'Received ' . ($pushed ? 'pushed ' : '') . 'response in {response_duration_formatted} for #{request_id}';
+            $this->logger->debug($message, [
                 'response_duration_formatted' => $this->formatDuration($responseTime, $requestTime),
                 'request_method' => $originalRequest->getMethod(),
-                'request_host' => (string) $originalRequest->getUri()->getHost(),
+                'request_uri' => (string) $originalRequest->getUri()->withUserInfo(''),
                 'request_id' => $requestId,
             ]);
 
@@ -490,5 +555,10 @@ final class SingleUserCache implements ApplicationInterceptor
 
             return $response;
         });
+    }
+
+    private function getPushLockKey(Request $request): string
+    {
+        return $request->getMethod() . ' ' . $request->getUri()->withUserInfo('');
     }
 }
