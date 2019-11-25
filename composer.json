@@ -17,7 +17,8 @@
         "amphp/php-cs-fixer-config": "dev-master",
         "monolog/monolog": "^1.24",
         "amphp/log": "^1.0",
-        "amphp/phpunit-util": "^1.1"
+        "amphp/phpunit-util": "^1.1",
+        "amphp/file": "^1.0"
     },
     "license": "MIT",
     "authors": [
@@ -35,6 +36,9 @@
         "files": [
             "src/functions.php"
         ]
+    },
+    "conflict": {
+        "amphp/file": "<0.2 || >=2"
     },
     "scripts": {
         "test": "php vendor/bin/phpunit",

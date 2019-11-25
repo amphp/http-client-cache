@@ -6,3 +6,4 @@ vendor
 humbug.json
 .php_cs.cache
 .phpunit.result.cache
+examples/*.cache
