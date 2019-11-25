@@ -1,6 +1,5 @@
 <?php
 
-use Amp\Delayed;
 use Amp\Http\Client\Cache\FileCache;
 use Amp\Http\Client\Cache\SingleUserCache;
 use Amp\Http\Client\HttpClientBuilder;
@@ -13,6 +12,7 @@ use Amp\Sync\LocalKeyedMutex;
 use Monolog\Logger;
 use Monolog\Processor\PsrLogMessageProcessor;
 use function Amp\ByteStream\getStdout;
+use function Amp\delay;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -41,7 +41,7 @@ Loop::run(static function () {
     yield $response->getBody()->buffer();
 
     $logger->info('Waiting 3000 milliseconds before making another request...');
-    yield new Delayed(3000);
+    yield delay(3000);
 
     /** @var Response $response */
     $response = yield $client->request(new Request('https://api.github.com/users/kelunik'));
@@ -54,4 +54,9 @@ Loop::run(static function () {
     } else {
         $logger->info('Received another request ID (non-cached response)');
     }
+
+    $logger->info('Waiting 120 seconds to ensure the cache GC kicks in');
+    yield delay(120 * 1000);
+
+    $logger->info('Done, cache directory should be empty again');
 });
