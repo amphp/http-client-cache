@@ -47,7 +47,7 @@ Loop::run(static function () use ($argv) {
     $response = yield $client->request(new Request('https://http2-server-push-demo.keksi.io/image.jpg'));
     yield $response->getBody()->buffer();
 
-    $logger->info('Took {runtime} milliseconds' . ($pushDisabled ? ', run with --disable-push to compare' : ''), [
+    $logger->info('Took {runtime} milliseconds' . (!$pushDisabled ? ', run with --disable-push to compare' : ''), [
         'runtime' => getCurrentTime() - $start,
     ]);
 });

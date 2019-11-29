@@ -1,6 +1,6 @@
 <?php
 
-use Amp\Http\Client\Cache\FileCache;
+use Amp\Cache\FileCache;
 use Amp\Http\Client\Cache\SingleUserCache;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;

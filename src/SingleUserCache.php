@@ -558,7 +558,8 @@ final class SingleUserCache implements ApplicationInterceptor
                                 $storedResponses
                             );
                         } catch (\Throwable $e) {
-                            $this->logger->warning('Failed to store response in cache due to an exception', [
+                            $this->logger->warning('Failed to store response for {request_uri} in cache due to an exception', [
+                                'request_uri' => $response->getRequest()->getUri()->withUserInfo(''),
                                 'exception' => $e,
                             ]);
                         } finally {

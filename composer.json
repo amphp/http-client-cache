@@ -8,8 +8,8 @@
         "ext-filter": "*",
         "amphp/amp": "^2.4",
         "amphp/http": "^1.5",
-        "amphp/http-client": "4.0.0-rc9",
-        "amphp/cache": "^1.2",
+        "amphp/http-client": "dev-http2-split as 4.0.0-rc9",
+        "amphp/cache": "^1.3",
         "psr/log": "^1.1",
         "kelunik/string": "^1.0"
     },
