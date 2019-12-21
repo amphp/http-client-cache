@@ -7,7 +7,6 @@ use Amp\Http\Client\HttpException;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Message;
-use function Amp\Http\Client\Cache\isFresh;
 use function Amp\Http\Client\Cache\now;
 use function Amp\Http\Client\Cache\parseCacheControlHeader;
 use function Amp\Http\Client\Cache\parseDateHeader;
