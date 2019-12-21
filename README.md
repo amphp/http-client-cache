@@ -8,9 +8,14 @@ This package provides an HTTP cache in form of an `ApplicationInterceptor` for [
 
 ## Features
 
- - Conditional requests (planned)
- - Private cache
- - Shared cache (planned)
+ - Private cache (`SingleUserCache`)
+ - Automatic `vary` header support
+ - Caching pushed responses
+
+## Planned Features
+
+ - Shared cache
+ - Conditional requests
 
 ## Installation
 
@@ -21,6 +26,9 @@ composer require amphp/http-client-cache
 ```
 
 ## Usage
+
+Currently, only a `SingleUserCache` is provided.
+Therefore it is unsafe to use a single instance for multiple users, e.g. different access tokens.
 
 ```php
 use Amp\Cache\FileCache;
