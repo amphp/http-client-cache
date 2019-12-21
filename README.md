@@ -20,6 +20,21 @@ This package can be installed as a [Composer](https://getcomposer.org/) dependen
 composer require amphp/http-client-cache
 ```
 
+## Usage
+
+```php
+use Amp\Cache\FileCache;
+use Amp\Http\Client\HttpClientBuilder;
+use Amp\Http\Client\Cache\SingleUserCache;
+use Amp\Sync\LocalKeyedMutex;
+
+$cache = new FileCache(__DIR__, new LocalKeyedMutex);
+
+$client = (new HttpClientBuilder)
+    ->intercept(new SingleUserCache($cache, $logger))
+    ->build();
+```
+
 ## Examples
 
 More extensive code examples reside in the [`examples`](./examples) directory.
