@@ -12,11 +12,13 @@ use Amp\CancelledException;
 use Amp\Deferred;
 use Amp\Emitter;
 use Amp\Http\Client\ApplicationInterceptor;
+use Amp\Http\Client\Cache\Internal\CachedResponse;
 use Amp\Http\Client\DelegateHttpClient;
 use Amp\Http\Client\HttpException;
 use Amp\Http\Client\Internal\ResponseBodyStream;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
+use Amp\Http\Message;
 use Amp\Promise;
 use Psr\Log\LoggerInterface as PsrLogger;
 use Psr\Log\NullLogger;
@@ -162,7 +164,7 @@ final class SingleUserCache implements ApplicationInterceptor
             $originalRequest = clone $request;
 
             $responses = yield $this->fetchStoredResponses($originalRequest);
-            $cachedResponse = selectStoredResponse($originalRequest, ...$responses);
+            $cachedResponse = $this->selectStoredResponse($originalRequest, ...$responses);
 
             if ($cachedResponse === null) {
                 return $this->fetchFreshResponse($client, $request, $cancellation);
@@ -193,7 +195,7 @@ final class SingleUserCache implements ApplicationInterceptor
                 new InMemoryStream($cachedBody)
             );
 
-            $response->setHeader('age', calculateAge($cachedResponse));
+            $response->setHeader('age', $cachedResponse->getAge());
 
             return $response;
         });
@@ -302,7 +304,7 @@ final class SingleUserCache implements ApplicationInterceptor
         foreach ($responses as $response) {
             \assert($response instanceof CachedResponse);
 
-            $ttl = \max($ttl, calculateFreshnessLifetime($response) - calculateAge($response));
+            $ttl = \max($ttl, $response->getFreshnessLifetime() - $response->getAge());
         }
 
         return $ttl;
@@ -586,5 +588,74 @@ final class SingleUserCache implements ApplicationInterceptor
     private function getPushLockKey(Request $request): string
     {
         return $request->getMethod() . ' ' . $request->getUri()->withUserInfo('');
+    }
+
+    /**
+     * @param Request        $request
+     * @param CachedResponse ...$responses
+     *
+     * @return CachedResponse|null
+     *
+     * @see https://tools.ietf.org/html/rfc7234.html#section-4.1
+     */
+    private function selectStoredResponse(Request $request, CachedResponse ...$responses): ?CachedResponse
+    {
+        $requestCacheControl = parseCacheControlHeader($request);
+
+        $responses = $this->sortMessagesByDateHeader($responses);
+
+        foreach ($responses as $response) {
+            $responseCacheControl = parseCacheControlHeader($response);
+
+            $age = $response->getAge();
+            $lifetime = $response->getFreshnessLifetime();
+
+            if (isset($requestCacheControl[ResponseCacheControl::MAX_AGE]) && $age > $requestCacheControl[RequestCacheControl::MAX_AGE]) {
+                continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.1
+            }
+
+            if ($age >= $lifetime) { // stale
+                if (isset($responseCacheControl[ResponseCacheControl::MUST_REVALIDATE])) {
+                    continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.2.1
+                }
+
+                $staleTime = $age - $lifetime;
+                if (!isset($requestCacheControl[RequestCacheControl::MAX_STALE]) || $staleTime >= $requestCacheControl[RequestCacheControl::MAX_STALE]) {
+                    continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.2
+                }
+            }
+
+            if (isset($requestCacheControl[RequestCacheControl::MIN_FRESH]) && $age + $requestCacheControl[RequestCacheControl::MIN_FRESH] >= $lifetime) {
+                continue; // https://tools.ietf.org/html/rfc7234.html#section-5.2.1.3
+            }
+
+            if (!$response->matches($request)) {
+                continue;
+            }
+
+            return $response;
+        }
+
+        return null;
+    }
+
+    private function sortMessagesByDateHeader(array $responses): array
+    {
+        \usort($responses, static function (Message $a, Message $b): int {
+            $dateA = parseDateHeader($a->getHeader('date'));
+            $dateB = parseDateHeader($b->getHeader('date'));
+
+            if ($dateA === null) {
+                return 1;
+            }
+
+            if ($dateB === null) {
+                return -1;
+            }
+
+            return $dateA <=> $dateB;
+        });
+
+        return $responses;
     }
 }

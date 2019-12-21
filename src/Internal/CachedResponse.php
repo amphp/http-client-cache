@@ -1,14 +1,21 @@
 <?php
 
-namespace Amp\Http\Client\Cache;
+namespace Amp\Http\Client\Cache\Internal;
 
+use Amp\Http\Client\Cache\ResponseCacheControl;
 use Amp\Http\Client\HttpException;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Message;
+use function Amp\Http\Client\Cache\isFresh;
+use function Amp\Http\Client\Cache\now;
+use function Amp\Http\Client\Cache\parseCacheControlHeader;
+use function Amp\Http\Client\Cache\parseDateHeader;
+use function Amp\Http\Client\Cache\parseExpiresHeader;
 use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
 
+/** @internal */
 final class CachedResponse extends Message
 {
     public static function fromResponse(
@@ -130,6 +137,65 @@ final class CachedResponse extends Message
         $this->bodyHash = $bodyHash;
     }
 
+    /**
+     * @return int
+     *
+     * @see https://tools.ietf.org/html/rfc7234.html#section-4.2.1
+     */
+    public function getFreshnessLifetime(): int
+    {
+        $cacheControl = parseCacheControlHeader($this);
+
+        if (isset($cacheControl[ResponseCacheControl::MAX_AGE])) {
+            return $cacheControl[ResponseCacheControl::MAX_AGE];
+        }
+
+        if ($this->hasHeader('expires')) {
+            $headerCount = \count($this->getHeaderArray('expires'));
+            if ($headerCount > 1) {
+                return 0; // treat as expired
+            }
+
+            $expires = parseExpiresHeader($this->getHeader('expires'));
+            $date = parseDateHeader($this->getHeader('date'));
+
+            if ($date === null) {
+                return 0; // treat as expired
+            }
+
+            return \max(0, $expires->getTimestamp() - $date->getTimestamp());
+        }
+
+        return 0; // treat as expired, we don't implement heuristic freshness for now
+    }
+
+    /**
+     * @return int
+     *
+     * @see https://tools.ietf.org/html/rfc7234.html#section-4.2.3
+     */
+    public function getAge(): int
+    {
+        $date = parseDateHeader($this->getHeader('date'));
+        if ($date === null) {
+            /** @noinspection PhpUndefinedClassInspection */
+            throw new \AssertionError('Got a cached response without date header, which should never happen. Please report this as a bug.');
+        }
+
+        $ageValue = (int) ($this->getHeader('age') ?? '0');
+
+        $apparentAge = \max(0, $this->getResponseTime()->getTimestamp() - $date->getTimestamp());
+
+        $responseDelay = $this->getResponseTime()->getTimestamp() - $this->getResponseTime()->getTimestamp();
+        $correctedAgeValue = $ageValue + $responseDelay;
+
+        $correctedInitialAge = \max($apparentAge, $correctedAgeValue);
+
+        $residentTime = now()->getTimestamp() - $this->getResponseTime()->getTimestamp();
+
+        return $correctedInitialAge + $residentTime;
+    }
+
     public function toCacheData(): string
     {
         return \json_encode([
@@ -217,6 +283,26 @@ final class CachedResponse extends Message
     public function getBodyHash(): string
     {
         return $this->bodyHash;
+    }
+
+    /**
+     * @return bool
+     *
+     * @see https://tools.ietf.org/html/rfc7234.html#section-5.3
+     */
+    public function isStale(): bool
+    {
+        return !$this->isFresh();
+    }
+
+    /**
+     * @return bool
+     *
+     * @see https://tools.ietf.org/html/rfc7234.html#section-5.3
+     */
+    public function isFresh(): bool
+    {
+        return $this->getFreshnessLifetime() > $this->getAge();
     }
 
     private function buildVaryRequestHeaders(Request $request): array

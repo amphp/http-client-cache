@@ -40,7 +40,6 @@ class ParseCacheControlHeaderTest extends TestCase
         return parseCacheControlHeader(new class(['cache-control' => $headerValue]) extends Message {
             public function __construct(array $headers = [])
             {
-                /** @noinspection PhpUnhandledExceptionInspection */
                 $this->setHeaders($headers);
             }
         });

@@ -107,6 +107,7 @@ class SingleUserCacheTest extends AsyncTestCase
 
             $countingInterceptor = new class($clientCallCount, $this->responseBody) implements ApplicationInterceptor {
                 private $clientCallCount;
+                private $responseBody;
 
                 public function __construct(int &$clientCallCount, string $responseBody)
                 {

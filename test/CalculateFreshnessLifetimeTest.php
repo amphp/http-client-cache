@@ -3,6 +3,7 @@
 namespace Amp\Http\Client\Cache;
 
 use Amp\ByteStream\InMemoryStream;
+use Amp\Http\Client\Cache\Internal\CachedResponse;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use PHPUnit\Framework\TestCase;
@@ -65,7 +66,7 @@ class CalculateFreshnessLifetimeTest extends TestCase
 
         $cachedResponse = CachedResponse::fromResponse($request, $response, now(), now(), 'abc');
 
-        $this->result = calculateFreshnessLifetime($cachedResponse);
+        $this->result = $cachedResponse->getFreshnessLifetime();
     }
 
     protected function thenFreshnessLifetimeIsEqualTo(int $freshnessLifetime): void
