@@ -87,24 +87,16 @@ final class CachedResponse extends Message
         }
     }
 
-    /** @var \DateTimeImmutable */
-    private $requestTime;
-    /** @var \DateTimeImmutable */
-    private $responseTime;
+    private \DateTimeImmutable $requestTime;
+    private \DateTimeImmutable $responseTime;
 
-    /** @var string */
-    private $protocolVersion;
-    /** @var int */
-    private $status;
-    /** @var string */
-    private $reason;
+    private string $protocolVersion;
+    private int $status;
+    private string $reason;
 
-    /** @var string */
-    private $requestMethod;
-    /** @var string */
-    private $requestTarget;
-    /** @var string[][] */
-    private $requestHeaders;
+    private string $requestMethod;
+    private string $requestTarget;
+    private array $requestHeaders;
 
     /** @var string */
     private $bodyHash;

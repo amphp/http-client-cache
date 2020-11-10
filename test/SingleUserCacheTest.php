@@ -11,79 +11,72 @@ use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\PHPUnit\AsyncTestCase;
-use Amp\Promise;
-use Amp\Success;
-use function Amp\call;
+use function Amp\delay;
 
 class SingleUserCacheTest extends AsyncTestCase
 {
-    /** @var Request */
-    private $request;
+    private Request $request;
 
-    /** @var Response */
-    private $response;
+    private Response $response;
 
-    /** @var SingleUserCache */
-    private $cache;
+    private SingleUserCache $cache;
 
-    /** @var int */
-    private $clientCallCount;
+    private int $clientCallCount;
 
-    /** @var string */
-    private $responseBody = 'hello';
+    private string $responseBody = 'hello';
 
-    public function testFreshResponse(): \Generator
+    public function testFreshResponse(): void
     {
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(1);
         $this->thenResponseDoesNotContainHeader('age');
     }
 
-    public function testCachedResponse(): \Generator
+    public function testCachedResponse(): void
     {
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(1);
         $this->thenResponseCodeIsEqualTo(200);
-        yield $this->thenResponseBodyIs($this->responseBody);
+        $this->thenResponseBodyIs($this->responseBody);
 
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(1);
         $this->thenResponseContainsHeader('age');
-        yield $this->thenResponseBodyIs($this->responseBody);
+        $this->thenResponseBodyIs($this->responseBody);
     }
 
-    public function testLargeResponseNotCached(): \Generator
+    public function testLargeResponseNotCached(): void
     {
         $this->givenResponseBodySize(1024 * 1024 + 1);
 
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(1);
         $this->thenResponseCodeIsEqualTo(200);
 
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(2);
         $this->thenResponseDoesNotContainHeader('age');
     }
 
-    public function testVeryLargeResponseBodyConsumedFine(): \Generator
+    public function testVeryLargeResponseBodyConsumedFine(): void
     {
         $this->givenResponseBodySize(1024 * 1024 * 2);
 
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
-        yield $this->thenResponseBodyIs($this->responseBody);
+        $this->thenResponseBodyIs($this->responseBody);
     }
 
-    public function testOnlyIfCached(): \Generator
+    public function testOnlyIfCached(): void
     {
         $this->givenRequestHeader('cache-control', 'only-if-cached');
 
-        yield $this->whenRequestIsExecuted();
+        $this->whenRequestIsExecuted();
 
         $this->thenClientCallCountIsEqualTo(0);
         $this->thenResponseDoesNotContainHeader('age');
@@ -100,48 +93,50 @@ class SingleUserCacheTest extends AsyncTestCase
         $this->request = new Request('https://example.org/');
     }
 
-    private function whenRequestIsExecuted(): Promise
+    protected function cleanup(): void
     {
-        return call(function () {
-            $clientCallCount = &$this->clientCallCount;
+        parent::cleanup();
+        delay(5); // Tick the event loop a few times to clean out watchers.
+    }
 
-            $countingInterceptor = new class($clientCallCount, $this->responseBody) implements ApplicationInterceptor {
-                private $clientCallCount;
-                private $responseBody;
+    private function whenRequestIsExecuted(): void
+    {
+        $clientCallCount = &$this->clientCallCount;
 
-                public function __construct(int &$clientCallCount, string $responseBody)
-                {
-                    $this->clientCallCount = &$clientCallCount;
-                    $this->responseBody = $responseBody;
-                }
+        $countingInterceptor = new class($clientCallCount, $this->responseBody) implements ApplicationInterceptor {
+            private int $clientCallCount;
+            private string $responseBody;
 
-                public function request(
-                    Request $request,
-                    CancellationToken $cancellation,
-                    DelegateHttpClient $client
-                ): Promise {
-                    $this->clientCallCount++;
+            public function __construct(int &$clientCallCount, string $responseBody)
+            {
+                $this->clientCallCount = &$clientCallCount;
+                $this->responseBody = $responseBody;
+            }
 
-                    return new Success(new Response(
-                        '1.1',
-                        200,
-                        'OK',
-                        ['cache-control' => 'max-age=60'],
-                        new InMemoryStream($this->responseBody),
-                        $request
-                    ));
-                }
-            };
+            public function request(
+                Request $request,
+                CancellationToken $cancellation,
+                DelegateHttpClient $client
+            ): Response {
+                $this->clientCallCount++;
 
-            $client = (new HttpClientBuilder)
-                ->intercept($this->cache)
-                ->intercept($countingInterceptor)
-                ->build();
+                return new Response(
+                    '1.1',
+                    200,
+                    'OK',
+                    ['cache-control' => 'max-age=60'],
+                    new InMemoryStream($this->responseBody),
+                    $request
+                );
+            }
+        };
 
-            $response = yield $client->request($this->request);
+        $client = (new HttpClientBuilder)
+            ->intercept($this->cache)
+            ->intercept($countingInterceptor)
+            ->build();
 
-            $this->response = $response;
-        });
+        $this->response = $client->request($this->request);
     }
 
     private function thenResponseDoesNotContainHeader(string $field): void
@@ -174,10 +169,8 @@ class SingleUserCacheTest extends AsyncTestCase
         $this->responseBody = \str_repeat('.', $size);
     }
 
-    private function thenResponseBodyIs(string $responseBody): Promise
+    private function thenResponseBodyIs(string $responseBody): void
     {
-        return call(function () use ($responseBody) {
-            self::assertSame($responseBody, yield $this->response->getBody()->buffer());
-        });
+        self::assertSame($responseBody, $this->response->getBody()->buffer());
     }
 }

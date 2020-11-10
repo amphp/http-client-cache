@@ -4,13 +4,12 @@ namespace Amp\Http\Client\Cache;
 
 use Amp\ByteStream\InMemoryStream;
 use Amp\ByteStream\InputStream;
-use Amp\ByteStream\IteratorStream;
+use Amp\ByteStream\PipelineStream;
 use Amp\Cache\Cache;
 use Amp\CancellationToken;
 use Amp\CancellationTokenSource;
 use Amp\CancelledException;
 use Amp\Deferred;
-use Amp\Emitter;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\Cache\Internal\CachedResponse;
 use Amp\Http\Client\DelegateHttpClient;
@@ -19,41 +18,35 @@ use Amp\Http\Client\Internal\ResponseBodyStream;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Message;
+use Amp\PipelineSource;
 use Amp\Promise;
 use Psr\Log\LoggerInterface as PsrLogger;
 use Psr\Log\NullLogger;
-use function Amp\asyncCall;
-use function Amp\call;
+use function Amp\async;
+use function Amp\await;
+use function Amp\defer;
 use function Amp\Http\formatDateHeader;
 
 final class SingleUserCache implements ApplicationInterceptor
 {
-    /** @var int */
-    private $nextRequestId = 1;
+    private int $nextRequestId = 1;
 
-    /** @var Cache */
-    private $cache;
+    private Cache $cache;
 
-    /** @var PsrLogger */
-    private $logger;
+    private PsrLogger $logger;
 
-    /** @var int */
-    private $responseSizeLimit;
+    private int $responseSizeLimit;
 
-    /** @var int */
-    private $requestCount = 0;
+    private int $requestCount = 0;
 
-    /** @var int */
-    private $hitCount = 0;
+    private int $hitCount = 0;
 
-    /** @var int */
-    private $networkCount = 0;
+    private int $networkCount = 0;
 
     /** @var Promise[] */
-    private $pushLocks = [];
+    private array $pushLocks = [];
 
-    /** @var bool */
-    private $storePushedResponses = true;
+    private bool $storePushedResponses = true;
 
     public function __construct(Cache $cache, ?PsrLogger $logger = null)
     {
@@ -96,143 +89,137 @@ final class SingleUserCache implements ApplicationInterceptor
         Request $request,
         CancellationToken $cancellation,
         DelegateHttpClient $client
-    ): Promise {
-        return call(function () use ($request, $cancellation, $client) {
-            $this->requestCount++;
+    ): Response {
+        $this->requestCount++;
 
-            if ($this->storePushedResponses) {
-                $originalPushHandler = $request->getPushHandler();
-                $request->setPushHandler(function (Request $request, Promise $response) use ($originalPushHandler) {
-                    $requestTime = now();
-                    $requestId = $this->nextRequestId++;
+        if ($this->storePushedResponses) {
+            $originalPushHandler = $request->getPushHandler();
+            $request->setPushHandler(function (Request $request, Promise $response) use ($originalPushHandler): Promise {
+                $requestTime = now();
+                $requestId = $this->nextRequestId++;
 
-                    $deferred = new Deferred;
-                    $pushLockKey = $this->getPushLockKey($request);
-
-                    if (!isset($this->pushLocks[$pushLockKey])) {
-                        $this->pushLocks[$pushLockKey] = $deferred->promise();
-                        $this->pushLocks[$pushLockKey]->onResolve(function () use ($pushLockKey) {
-                            unset($this->pushLocks[$pushLockKey]);
-                        });
-                    }
-
-                    try {
-                        $this->logger->debug('Received pushed request for #{request_id}', [
-                            'request_method' => $request->getMethod(),
-                            'request_uri' => (string) $request->getUri()->withUserInfo(''),
-                            'request_id' => $requestId,
-                        ]);
-
-                        $response = call(function () use (
-                            $request,
-                            $response,
-                            $requestId,
-                            $requestTime,
-                            $deferred,
-                            $originalPushHandler
-                        ) {
-                            /** @var Response $response */
-                            $response = yield $response;
-
-                            if ($originalPushHandler || $this->isCacheable($response)) {
-                                return $this->storeResponse($request, $response, $requestId, $requestTime, $deferred);
-                            }
-
-                            throw new HttpException('Rejecting push, because it is not cacheable');
-                        });
-
-                        if ($originalPushHandler) {
-                            return $originalPushHandler($request, $response);
-                        }
-
-                        return $response;
-                    } catch (\Throwable $e) {
-                        $deferred->resolve();
-
-                        throw $e;
-                    }
-                });
-
+                $deferred = new Deferred;
                 $pushLockKey = $this->getPushLockKey($request);
 
-                // Await pushed responses if they're already in-flight
-                if (isset($this->pushLocks[$pushLockKey])) {
-                    yield $this->pushLocks[$pushLockKey];
+                if (!isset($this->pushLocks[$pushLockKey])) {
+                    $this->pushLocks[$pushLockKey] = $deferred->promise();
+                    $this->pushLocks[$pushLockKey]->onResolve(function () use ($pushLockKey): void {
+                        unset($this->pushLocks[$pushLockKey]);
+                    });
                 }
+
+                try {
+                    $this->logger->debug('Received pushed request for #{request_id}', [
+                        'request_method' => $request->getMethod(),
+                        'request_uri' => (string) $request->getUri()->withUserInfo(''),
+                        'request_id' => $requestId,
+                    ]);
+
+                    $response = async(function () use (
+                        $request,
+                        $response,
+                        $requestId,
+                        $requestTime,
+                        $deferred,
+                        $originalPushHandler
+                    ): Response {
+                        $response = await($response);
+
+                        /** @var Response $response */
+                        if ($originalPushHandler || $this->isCacheable($response)) {
+                            return $this->storeResponse($request, $response, $requestId, $requestTime, $deferred);
+                        }
+
+                        throw new HttpException('Rejecting push, because it is not cacheable');
+                    });
+
+                    if ($originalPushHandler) {
+                        return $originalPushHandler($request, $response);
+                    }
+
+                    return $response;
+                } catch (\Throwable $e) {
+                    $deferred->resolve();
+
+                    throw $e;
+                }
+            });
+
+            $pushLockKey = $this->getPushLockKey($request);
+
+            // Await pushed responses if they're already in-flight
+            if (isset($this->pushLocks[$pushLockKey])) {
+                await($this->pushLocks[$pushLockKey]);
             }
+        }
 
-            $originalRequest = clone $request;
+        $originalRequest = clone $request;
 
-            $responses = yield $this->fetchStoredResponses($originalRequest);
-            $cachedResponse = $this->selectStoredResponse($originalRequest, ...$responses);
+        $responses = $this->fetchStoredResponses($originalRequest);
+        $cachedResponse = $this->selectStoredResponse($originalRequest, ...$responses);
 
-            if ($cachedResponse === null) {
-                return $this->fetchFreshResponse($client, $request, $cancellation);
-            }
+        if ($cachedResponse === null) {
+            return $this->fetchFreshResponse($client, $request, $cancellation);
+        }
 
-            $cachedBody = yield $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
-            if ($cachedBody === null) {
-                return $this->fetchFreshResponse($client, $request, $cancellation);
-            }
+        $cachedBody = $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
+        if ($cachedBody === null) {
+            return $this->fetchFreshResponse($client, $request, $cancellation);
+        }
 
-            $validBodyHash = \hash('sha512', $cachedBody) === $cachedResponse->getBodyHash();
-            if (!$validBodyHash) {
-                $this->logger->warning('Cache entry modification detected, please make sure several cache users don\'t interfere with each other by using a PrefixCache to give individual users their own cache key space.');
-            }
+        $validBodyHash = \hash('sha512', $cachedBody) === $cachedResponse->getBodyHash();
+        if (!$validBodyHash) {
+            $this->logger->warning('Cache entry modification detected, please make sure several cache users don\'t interfere with each other by using a PrefixCache to give individual users their own cache key space.');
+        }
 
-            $requestHeader = parseCacheControlHeader($originalRequest);
-            $responseHeader = parseCacheControlHeader($cachedResponse);
+        $requestHeader = parseCacheControlHeader($originalRequest);
+        $responseHeader = parseCacheControlHeader($cachedResponse);
 
-            if (!$validBodyHash || isset($requestHeader[RequestCacheControl::NO_CACHE]) || isset($responseHeader[ResponseCacheControl::NO_CACHE])) {
-                return $this->fetchFreshResponse($client, $request, $cancellation);
-            }
+        if (!$validBodyHash || isset($requestHeader[RequestCacheControl::NO_CACHE]) || isset($responseHeader[ResponseCacheControl::NO_CACHE])) {
+            return $this->fetchFreshResponse($client, $request, $cancellation);
+        }
 
-            // TODO no-cache, requires validation
+        // TODO no-cache, requires validation
 
-            $response = $this->createResponseFromCache(
-                $cachedResponse,
-                $originalRequest,
-                new InMemoryStream($cachedBody)
-            );
+        $response = $this->createResponseFromCache(
+            $cachedResponse,
+            $originalRequest,
+            new InMemoryStream($cachedBody)
+        );
 
-            $response->setHeader('age', $cachedResponse->getAge());
+        $response->setHeader('age', $cachedResponse->getAge());
 
-            return $response;
-        });
+        return $response;
     }
 
     private function fetchFreshResponse(
         DelegateHttpClient $client,
         Request $request,
         CancellationToken $cancellation
-    ): Promise {
-        return call(function () use ($client, $request, $cancellation) {
-            $requestCacheControl = parseCacheControlHeader($request);
+    ): Response {
+        $requestCacheControl = parseCacheControlHeader($request);
 
-            if (isset($requestCacheControl[RequestCacheControl::ONLY_IF_CACHED])) {
-                return new Response($request->getProtocolVersions()[0], 504, 'No stored response available', [
-                    'date' => [formatDateHeader()],
-                ], new InMemoryStream, $request);
-            }
+        if (isset($requestCacheControl[RequestCacheControl::ONLY_IF_CACHED])) {
+            return new Response($request->getProtocolVersions()[0], 504, 'No stored response available', [
+                'date' => [formatDateHeader()],
+            ], new InMemoryStream, $request);
+        }
 
-            $this->networkCount++;
+        $this->networkCount++;
 
-            $requestTime = now();
-            $requestId = $this->nextRequestId++;
-            $originalRequest = clone $request;
+        $requestTime = now();
+        $requestId = $this->nextRequestId++;
+        $originalRequest = clone $request;
 
-            $this->logger->debug('Fetching fresh response for #{request_id}', [
-                'request_method' => $originalRequest->getMethod(),
-                'request_uri' => (string) $originalRequest->getUri()->withUserInfo(''),
-                'request_id' => $requestId,
-            ]);
+        $this->logger->debug('Fetching fresh response for #{request_id}', [
+            'request_method' => $originalRequest->getMethod(),
+            'request_uri' => (string) $originalRequest->getUri()->withUserInfo(''),
+            'request_id' => $requestId,
+        ]);
 
-            $response = yield $client->request($request, $cancellation);
+        $response = $client->request($request, $cancellation);
 
-            \assert($response instanceof Response);
-
-            return $this->storeResponse($originalRequest, $response, $requestId, $requestTime);
-        });
+        return $this->storeResponse($originalRequest, $response, $requestId, $requestTime);
     }
 
     private function createResponseFromCache(
@@ -257,23 +244,21 @@ final class SingleUserCache implements ApplicationInterceptor
         );
     }
 
-    private function fetchStoredResponses(Request $request): Promise
+    private function fetchStoredResponses(Request $request): array
     {
-        return call(function () use ($request) {
-            $rawCacheData = yield $this->cache->get($this->getPrimaryCacheKey($request));
-            if ($rawCacheData === null) {
-                return [];
-            }
+        $rawCacheData = $this->cache->get($this->getPrimaryCacheKey($request));
+        if ($rawCacheData === null) {
+            return [];
+        }
 
-            $responses = [];
-            $cacheData = \explode("\r\n", $rawCacheData);
+        $responses = [];
+        $cacheData = \explode("\r\n", $rawCacheData);
 
-            foreach ($cacheData as $responseData) {
-                $responses[] = CachedResponse::fromCacheData(\base64_decode($responseData));
-            }
+        foreach ($cacheData as $responseData) {
+            $responses[] = CachedResponse::fromCacheData(\base64_decode($responseData));
+        }
 
-            return $responses;
-        });
+        return $responses;
     }
 
     private function getPrimaryCacheKey(Request $request): string
@@ -281,20 +266,18 @@ final class SingleUserCache implements ApplicationInterceptor
         return $request->getMethod() . ' ' . $request->getUri();
     }
 
-    private function storeResponses(string $cacheKey, array $responses): Promise
+    private function storeResponses(string $cacheKey, array $responses): void
     {
-        return call(function () use ($cacheKey, $responses) {
-            $encodedDataSet = [];
-            foreach ($responses as $response) {
-                \assert($response instanceof CachedResponse);
+        $encodedDataSet = [];
+        foreach ($responses as $response) {
+            \assert($response instanceof CachedResponse);
 
-                $encodedDataSet[] = \base64_encode($response->toCacheData());
-            }
+            $encodedDataSet[] = \base64_encode($response->toCacheData());
+        }
 
-            $rawCacheData = \implode("\r\n", $encodedDataSet);
+        $rawCacheData = \implode("\r\n", $encodedDataSet);
 
-            return $this->cache->set($cacheKey, $rawCacheData, $this->calculateTtl($responses));
-        });
+        $this->cache->set($cacheKey, $rawCacheData, $this->calculateTtl($responses));
     }
 
     private function calculateTtl(array $responses): int
@@ -378,7 +361,7 @@ final class SingleUserCache implements ApplicationInterceptor
 
     private function createTeeStream(InputStream $inputStream, int $count = 2): array
     {
-        /** @var Emitter[] $emitters */
+        /** @var PipelineSource[] $emitters */
         $emitters = [];
         /** @var InputStream[] $streams */
         $streams = [];
@@ -386,18 +369,18 @@ final class SingleUserCache implements ApplicationInterceptor
         $cancellationTokens = [];
 
         for ($i = 0; $i < $count; $i++) {
-            $emitter = new Emitter;
+            $emitter = new PipelineSource;
             $emitters[] = $emitter;
 
             $cancellationTokenSource = new CancellationTokenSource;
-            $streams[] = new ResponseBodyStream(new IteratorStream($emitter->iterate()), $cancellationTokenSource);
+            $streams[] = new ResponseBodyStream(new PipelineStream($emitter->pipe()), $cancellationTokenSource);
 
             $cancellationTokens[] = $cancellationTokenSource->getToken();
         }
 
-        asyncCall(static function () use ($inputStream, $emitters, $cancellationTokens, $count) {
+        defer(static function () use ($inputStream, $emitters, $cancellationTokens, $count): void {
             try {
-                while (null !== $chunk = yield $inputStream->read()) {
+                while (null !== $chunk = $inputStream->read()) {
                     $cancelled = 0;
 
                     foreach ($cancellationTokens as $index => $cancellationToken) {
@@ -425,7 +408,7 @@ final class SingleUserCache implements ApplicationInterceptor
                         }
                     }
 
-                    yield Promise\first($promises);
+                    await(Promise\first($promises));
                 }
 
                 foreach ($emitters as $emitter) {
@@ -493,96 +476,94 @@ final class SingleUserCache implements ApplicationInterceptor
         int $requestId,
         \DateTimeImmutable $requestTime,
         ?Deferred $pushDeferred = null
-    ): Promise {
-        return call(function () use ($originalRequest, $response, $requestId, $requestTime, $pushDeferred) {
-            try {
-                if (!$response->hasHeader('date')) {
-                    $response->setHeader('date', formatDateHeader());
-                }
+    ): Response {
+        try {
+            if (!$response->hasHeader('date')) {
+                $response->setHeader('date', formatDateHeader());
+            }
 
-                $responseTime = now();
+            $responseTime = now();
 
-                $message = 'Received ' . ($pushDeferred ? 'pushed ' : '') . 'response in {response_duration_formatted} for #{request_id}';
-                $this->logger->debug($message, [
-                    'response_duration_formatted' => $this->formatDuration($responseTime, $requestTime),
-                    'request_method' => $originalRequest->getMethod(),
-                    'request_uri' => (string) $originalRequest->getUri()->withUserInfo(''),
-                    'request_id' => $requestId,
-                ]);
+            $message = 'Received ' . ($pushDeferred ? 'pushed ' : '') . 'response in {response_duration_formatted} for #{request_id}';
+            $this->logger->debug($message, [
+                'response_duration_formatted' => $this->formatDuration($responseTime, $requestTime),
+                'request_method' => $originalRequest->getMethod(),
+                'request_uri' => (string) $originalRequest->getUri()->withUserInfo(''),
+                'request_id' => $requestId,
+            ]);
 
-                // Another interceptor might have modified the URI or method, don't cache then
-                $sameMethod = $response->getRequest()->getMethod() === $originalRequest->getMethod();
-                $sameUri = (string) $response->getRequest()->getUri() === (string) $originalRequest->getUri();
+            // Another interceptor might have modified the URI or method, don't cache then
+            $sameMethod = $response->getRequest()->getMethod() === $originalRequest->getMethod();
+            $sameUri = (string) $response->getRequest()->getUri() === (string) $originalRequest->getUri();
 
-                if (!$sameMethod || !$sameUri) {
-                    $this->logger->warning('Won\'t store response in cache, because request method or request URI have been modified by an interceptor. '
-                        . 'Please check whether you can move such an interceptor up in the chain, so the method and URI are modified before the cache is invoked.');
-
-                    return $response;
-                }
-
-                if ($this->isCacheable($response)) {
-                    [$streamA, $streamB] = $this->createTeeStream($response->getBody());
-
-                    $response->setBody($streamA);
-
-                    asyncCall(function () use ($response, $streamB, $requestTime, $responseTime, $pushDeferred) {
-                        try {
-                            $bufferedBody = '';
-
-                            while (null !== $chunk = yield $streamB->read()) {
-                                $bufferedBody .= $chunk;
-
-                                if (\strlen($bufferedBody) > $this->responseSizeLimit) {
-                                    return;
-                                }
-                            }
-
-                            $bodyHash = \hash('sha512', $bufferedBody);
-
-                            $responseToStore = CachedResponse::fromResponse(
-                                $response->getRequest(),
-                                $response,
-                                $requestTime,
-                                $responseTime,
-                                $bodyHash
-                            );
-
-                            $ttl = $this->calculateTtl([$responseToStore]);
-
-                            yield $this->cache->set($this->getBodyCacheKey($bodyHash), $bufferedBody, $ttl);
-
-                            $storedResponses = yield $this->fetchStoredResponses($response->getRequest());
-                            $storedResponses[] = $responseToStore;
-
-                            yield $this->storeResponses(
-                                $this->getPrimaryCacheKey($response->getRequest()),
-                                $storedResponses
-                            );
-                        } catch (\Throwable $e) {
-                            $this->logger->warning('Failed to store response for {request_uri} in cache due to an exception', [
-                                'request_uri' => $response->getRequest()->getUri()->withUserInfo(''),
-                                'exception' => $e,
-                            ]);
-                        } finally {
-                            if ($pushDeferred) {
-                                $pushDeferred->resolve();
-                            }
-                        }
-                    });
-                } elseif ($pushDeferred) {
-                    $pushDeferred->resolve();
-                }
+            if (!$sameMethod || !$sameUri) {
+                $this->logger->warning('Won\'t store response in cache, because request method or request URI have been modified by an interceptor. '
+                    . 'Please check whether you can move such an interceptor up in the chain, so the method and URI are modified before the cache is invoked.');
 
                 return $response;
-            } catch (\Throwable $e) {
-                if ($pushDeferred) {
-                    $pushDeferred->resolve();
-                }
-
-                throw $e;
             }
-        });
+
+            if ($this->isCacheable($response)) {
+                [$streamA, $streamB] = $this->createTeeStream($response->getBody());
+
+                $response->setBody($streamA);
+
+                defer(function () use ($response, $streamB, $requestTime, $responseTime, $pushDeferred): void {
+                    try {
+                        $bufferedBody = '';
+
+                        while (null !== $chunk = $streamB->read()) {
+                            $bufferedBody .= $chunk;
+
+                            if (\strlen($bufferedBody) > $this->responseSizeLimit) {
+                                return;
+                            }
+                        }
+
+                        $bodyHash = \hash('sha512', $bufferedBody);
+
+                        $responseToStore = CachedResponse::fromResponse(
+                            $response->getRequest(),
+                            $response,
+                            $requestTime,
+                            $responseTime,
+                            $bodyHash
+                        );
+
+                        $ttl = $this->calculateTtl([$responseToStore]);
+
+                        $this->cache->set($this->getBodyCacheKey($bodyHash), $bufferedBody, $ttl);
+
+                        $storedResponses = $this->fetchStoredResponses($response->getRequest());
+                        $storedResponses[] = $responseToStore;
+
+                        $this->storeResponses(
+                            $this->getPrimaryCacheKey($response->getRequest()),
+                            $storedResponses
+                        );
+                    } catch (\Throwable $e) {
+                        $this->logger->warning('Failed to store response for {request_uri} in cache due to an exception', [
+                            'request_uri' => $response->getRequest()->getUri()->withUserInfo(''),
+                            'exception' => $e,
+                        ]);
+                    } finally {
+                        if ($pushDeferred) {
+                            $pushDeferred->resolve();
+                        }
+                    }
+                });
+            } elseif ($pushDeferred) {
+                $pushDeferred->resolve();
+            }
+
+            return $response;
+        } catch (\Throwable $e) {
+            if ($pushDeferred) {
+                $pushDeferred->resolve();
+            }
+
+            throw $e;
+        }
     }
 
     private function getPushLockKey(Request $request): string

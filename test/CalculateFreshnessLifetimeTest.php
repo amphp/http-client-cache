@@ -10,8 +10,8 @@ use PHPUnit\Framework\TestCase;
 
 class CalculateFreshnessLifetimeTest extends TestCase
 {
-    private $headers = [];
-    private $result;
+    private array $headers = [];
+    private int $result;
 
     public function testMaxAge(): void
     {
