@@ -2,16 +2,15 @@
 
 namespace Amp\Http\Client\Cache;
 
-use Amp\ByteStream\InMemoryStream;
-use Amp\Cache\ArrayCache;
-use Amp\CancellationToken;
+use Amp\ByteStream\ReadableBuffer;
+use Amp\Cache\LocalCache;
+use Amp\Cancellation;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\DelegateHttpClient;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\PHPUnit\AsyncTestCase;
-use function Amp\delay;
 
 class SingleUserCacheTest extends AsyncTestCase
 {
@@ -87,16 +86,10 @@ class SingleUserCacheTest extends AsyncTestCase
     {
         parent::setUp();
 
-        $this->cache = new SingleUserCache(new ArrayCache);
+        $this->cache = new SingleUserCache(new LocalCache());
         $this->clientCallCount = 0;
 
         $this->request = new Request('https://example.org/');
-    }
-
-    protected function cleanup(): void
-    {
-        parent::cleanup();
-        delay(5); // Tick the event loop a few times to clean out watchers.
     }
 
     private function whenRequestIsExecuted(): void
@@ -115,8 +108,8 @@ class SingleUserCacheTest extends AsyncTestCase
 
             public function request(
                 Request $request,
-                CancellationToken $cancellation,
-                DelegateHttpClient $client
+                Cancellation $cancellation,
+                DelegateHttpClient $httpClient
             ): Response {
                 $this->clientCallCount++;
 
@@ -125,7 +118,7 @@ class SingleUserCacheTest extends AsyncTestCase
                     200,
                     'OK',
                     ['cache-control' => 'max-age=60'],
-                    new InMemoryStream($this->responseBody),
+                    new ReadableBuffer($this->responseBody),
                     $request
                 );
             }

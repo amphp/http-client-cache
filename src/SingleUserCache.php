@@ -2,14 +2,16 @@
 
 namespace Amp\Http\Client\Cache;
 
-use Amp\ByteStream\InMemoryStream;
-use Amp\ByteStream\InputStream;
-use Amp\ByteStream\PipelineStream;
+use Amp\ByteStream;
+use Amp\ByteStream\ReadableBuffer;
+use Amp\ByteStream\ReadableIterableStream;
+use Amp\ByteStream\ReadableStream;
 use Amp\Cache\Cache;
-use Amp\CancellationToken;
-use Amp\CancellationTokenSource;
+use Amp\Cancellation;
 use Amp\CancelledException;
-use Amp\Deferred;
+use Amp\DeferredCancellation;
+use Amp\DeferredFuture;
+use Amp\Future;
 use Amp\Http\Client\ApplicationInterceptor;
 use Amp\Http\Client\Cache\Internal\CachedResponse;
 use Amp\Http\Client\DelegateHttpClient;
@@ -18,24 +20,15 @@ use Amp\Http\Client\Internal\ResponseBodyStream;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Message;
-use Amp\PipelineSource;
-use Amp\Promise;
+use Amp\Pipeline\Queue;
 use Psr\Log\LoggerInterface as PsrLogger;
 use Psr\Log\NullLogger;
 use function Amp\async;
-use function Amp\await;
-use function Amp\defer;
 use function Amp\Http\formatDateHeader;
 
 final class SingleUserCache implements ApplicationInterceptor
 {
     private int $nextRequestId = 1;
-
-    private Cache $cache;
-
-    private PsrLogger $logger;
-
-    private int $responseSizeLimit;
 
     private int $requestCount = 0;
 
@@ -43,16 +36,18 @@ final class SingleUserCache implements ApplicationInterceptor
 
     private int $networkCount = 0;
 
-    /** @var Promise[] */
+    /** @var array<string, Future<void>> */
+    private array $pendingResponses = [];
+
+    /** @var array<string, Future<void>> */
     private array $pushLocks = [];
 
-    private bool $storePushedResponses = true;
-
-    public function __construct(Cache $cache, ?PsrLogger $logger = null)
-    {
-        $this->cache = $cache;
-        $this->logger = $logger ?? new NullLogger;
-        $this->responseSizeLimit = 1 * 1024 * 1024; // 1MB
+    public function __construct(
+        private readonly Cache $cache,
+        private readonly PsrLogger $logger = new NullLogger(),
+        private readonly int $responseSizeLimit = 1 << 20, // 1MB
+        private readonly bool $storePushedResponses = true,
+    ){
     }
 
     public function getRequestCount(): int
@@ -70,40 +65,25 @@ final class SingleUserCache implements ApplicationInterceptor
         return $this->networkCount;
     }
 
-    public function setResponseSizeLimit(int $limit): void
-    {
-        $this->responseSizeLimit = $limit;
-    }
-
-    public function getResponseSizeLimit(): int
-    {
-        return $this->responseSizeLimit;
-    }
-
-    public function setStorePushedResponses(bool $store): void
-    {
-        $this->storePushedResponses = $store;
-    }
-
     public function request(
         Request $request,
-        CancellationToken $cancellation,
-        DelegateHttpClient $client
+        Cancellation $cancellation,
+        DelegateHttpClient $httpClient
     ): Response {
         $this->requestCount++;
 
         if ($this->storePushedResponses) {
             $originalPushHandler = $request->getPushHandler();
-            $request->setPushHandler(function (Request $request, Promise $response) use ($originalPushHandler): Promise {
+            $request->setPushHandler(function (Request $request, Future $response) use ($originalPushHandler): void {
                 $requestTime = now();
                 $requestId = $this->nextRequestId++;
 
-                $deferred = new Deferred;
+                $deferred = new DeferredFuture();
                 $pushLockKey = $this->getPushLockKey($request);
 
                 if (!isset($this->pushLocks[$pushLockKey])) {
-                    $this->pushLocks[$pushLockKey] = $deferred->promise();
-                    $this->pushLocks[$pushLockKey]->onResolve(function () use ($pushLockKey): void {
+                    $this->pushLocks[$pushLockKey] = $future = $deferred->getFuture();
+                    $future->finally(function () use ($pushLockKey): void {
                         unset($this->pushLocks[$pushLockKey]);
                     });
                 }
@@ -123,7 +103,7 @@ final class SingleUserCache implements ApplicationInterceptor
                         $deferred,
                         $originalPushHandler
                     ): Response {
-                        $response = await($response);
+                        $response = $response->await();
 
                         /** @var Response $response */
                         if ($originalPushHandler || $this->isCacheable($response)) {
@@ -134,12 +114,10 @@ final class SingleUserCache implements ApplicationInterceptor
                     });
 
                     if ($originalPushHandler) {
-                        return $originalPushHandler($request, $response);
+                        $originalPushHandler($request, $response);
                     }
-
-                    return $response;
                 } catch (\Throwable $e) {
-                    $deferred->resolve();
+                    $deferred->complete();
 
                     throw $e;
                 }
@@ -148,23 +126,24 @@ final class SingleUserCache implements ApplicationInterceptor
             $pushLockKey = $this->getPushLockKey($request);
 
             // Await pushed responses if they're already in-flight
-            if (isset($this->pushLocks[$pushLockKey])) {
-                await($this->pushLocks[$pushLockKey]);
-            }
+            ($this->pushLocks[$pushLockKey] ?? null)?->await();
         }
 
         $originalRequest = clone $request;
+
+        // Await pending response for the same resource
+        ($this->pendingResponses[$this->getPrimaryCacheKey($originalRequest)] ?? null)?->await();
 
         $responses = $this->fetchStoredResponses($originalRequest);
         $cachedResponse = $this->selectStoredResponse($originalRequest, ...$responses);
 
         if ($cachedResponse === null) {
-            return $this->fetchFreshResponse($client, $request, $cancellation);
+            return $this->fetchFreshResponse($httpClient, $request, $cancellation);
         }
 
         $cachedBody = $this->cache->get($this->getBodyCacheKey($cachedResponse->getBodyHash()));
         if ($cachedBody === null) {
-            return $this->fetchFreshResponse($client, $request, $cancellation);
+            return $this->fetchFreshResponse($httpClient, $request, $cancellation);
         }
 
         $validBodyHash = \hash('sha512', $cachedBody) === $cachedResponse->getBodyHash();
@@ -176,7 +155,7 @@ final class SingleUserCache implements ApplicationInterceptor
         $responseHeader = parseCacheControlHeader($cachedResponse);
 
         if (!$validBodyHash || isset($requestHeader[RequestCacheControl::NO_CACHE]) || isset($responseHeader[ResponseCacheControl::NO_CACHE])) {
-            return $this->fetchFreshResponse($client, $request, $cancellation);
+            return $this->fetchFreshResponse($httpClient, $request, $cancellation);
         }
 
         // TODO no-cache, requires validation
@@ -184,7 +163,7 @@ final class SingleUserCache implements ApplicationInterceptor
         $response = $this->createResponseFromCache(
             $cachedResponse,
             $originalRequest,
-            new InMemoryStream($cachedBody)
+            new ReadableBuffer($cachedBody),
         );
 
         $response->setHeader('age', $cachedResponse->getAge());
@@ -193,16 +172,16 @@ final class SingleUserCache implements ApplicationInterceptor
     }
 
     private function fetchFreshResponse(
-        DelegateHttpClient $client,
+        DelegateHttpClient $httpClient,
         Request $request,
-        CancellationToken $cancellation
+        Cancellation $cancellation
     ): Response {
         $requestCacheControl = parseCacheControlHeader($request);
 
         if (isset($requestCacheControl[RequestCacheControl::ONLY_IF_CACHED])) {
             return new Response($request->getProtocolVersions()[0], 504, 'No stored response available', [
                 'date' => [formatDateHeader()],
-            ], new InMemoryStream, $request);
+            ], new ReadableBuffer(), $request);
         }
 
         $this->networkCount++;
@@ -217,7 +196,7 @@ final class SingleUserCache implements ApplicationInterceptor
             'request_id' => $requestId,
         ]);
 
-        $response = $client->request($request, $cancellation);
+        $response = $httpClient->request($request, $cancellation);
 
         return $this->storeResponse($originalRequest, $response, $requestId, $requestTime);
     }
@@ -225,7 +204,7 @@ final class SingleUserCache implements ApplicationInterceptor
     private function createResponseFromCache(
         CachedResponse $cachedResponse,
         Request $request,
-        InputStream $bodyStream
+        ReadableStream $bodyStream,
     ): Response {
         $this->hitCount++;
 
@@ -263,7 +242,7 @@ final class SingleUserCache implements ApplicationInterceptor
 
     private function getPrimaryCacheKey(Request $request): string
     {
-        return $request->getMethod() . ' ' . $request->getUri();
+        return $request->getMethod() . ':' . $request->getUri();
     }
 
     private function storeResponses(string $cacheKey, array $responses): void
@@ -359,35 +338,35 @@ final class SingleUserCache implements ApplicationInterceptor
         return true;
     }
 
-    private function createTeeStream(InputStream $inputStream, int $count = 2): array
+    private function createTeeStream(ReadableStream $stream, int $count): array
     {
-        /** @var PipelineSource[] $emitters */
-        $emitters = [];
-        /** @var InputStream[] $streams */
+        /** @var Queue[] $queues */
+        $queues = [];
+        /** @var ReadableStream[] $streams */
         $streams = [];
-        /** @var CancellationToken[] $cancellationTokens */
-        $cancellationTokens = [];
+        /** @var Cancellation[] $cancellations */
+        $cancellations = [];
 
         for ($i = 0; $i < $count; $i++) {
-            $emitter = new PipelineSource;
-            $emitters[] = $emitter;
+            $queue = new Queue();
+            $queues[] = $queue;
 
-            $cancellationTokenSource = new CancellationTokenSource;
-            $streams[] = new ResponseBodyStream(new PipelineStream($emitter->pipe()), $cancellationTokenSource);
+            $deferredCancellation = new DeferredCancellation();
+            $streams[] = new ResponseBodyStream(new ReadableIterableStream($queue->iterate()), $deferredCancellation);
 
-            $cancellationTokens[] = $cancellationTokenSource->getToken();
+            $cancellations[] = $deferredCancellation->getCancellation();
         }
 
-        defer(static function () use ($inputStream, $emitters, $cancellationTokens, $count): void {
+        async(static function () use ($stream, $queues, $cancellations, $count): void {
             try {
-                while (null !== $chunk = $inputStream->read()) {
+                while (null !== $chunk = $stream->read()) {
                     $cancelled = 0;
 
-                    foreach ($cancellationTokens as $index => $cancellationToken) {
+                    foreach ($cancellations as $index => $cancellationToken) {
                         if ($cancellationToken->isRequested()) {
-                            if (isset($emitters[$index])) {
-                                $emitters[$index]->fail(new CancelledException);
-                                $emitters[$index] = null;
+                            if (isset($queues[$index])) {
+                                $queues[$index]->error(new CancelledException);
+                                unset($queues[$index]);
                             }
 
                             $cancelled++;
@@ -395,32 +374,24 @@ final class SingleUserCache implements ApplicationInterceptor
                     }
 
                     if ($cancelled === $count) {
-                        unset($inputStream);
-
+                        unset($stream);
                         return;
                     }
 
-                    $promises = [];
-
-                    foreach ($emitters as $emitter) {
-                        if ($emitter !== null) {
-                            $promises[] = $emitter->emit($chunk);
-                        }
+                    $futures = [];
+                    foreach ($queues as $queue) {
+                        $futures[] = $queue->pushAsync($chunk);
                     }
 
-                    await(Promise\first($promises));
+                    Future\awaitAll($futures);
                 }
 
-                foreach ($emitters as $emitter) {
-                    if ($emitter !== null) {
-                        $emitter->complete();
-                    }
+                foreach ($queues as $queue) {
+                    $queue->complete();
                 }
             } catch (\Throwable $e) {
-                foreach ($emitters as $emitter) {
-                    if ($emitter !== null) {
-                        $emitter->fail($e);
-                    }
+                foreach ($queues as $queue) {
+                    $queue->error($e);
                 }
             }
         });
@@ -475,7 +446,7 @@ final class SingleUserCache implements ApplicationInterceptor
         Response $response,
         int $requestId,
         \DateTimeImmutable $requestTime,
-        ?Deferred $pushDeferred = null
+        ?DeferredFuture $pushDeferred = null,
     ): Response {
         try {
             if (!$response->hasHeader('date')) {
@@ -504,21 +475,21 @@ final class SingleUserCache implements ApplicationInterceptor
             }
 
             if ($this->isCacheable($response)) {
-                [$streamA, $streamB] = $this->createTeeStream($response->getBody());
+                [$streamA, $streamB] = $this->createTeeStream($response->getBody(), 2);
 
                 $response->setBody($streamA);
 
-                defer(function () use ($response, $streamB, $requestTime, $responseTime, $pushDeferred): void {
+                $primaryCacheKey = $this->getPrimaryCacheKey($response->getRequest());
+                $this->pendingResponses[$primaryCacheKey] = async(function () use (
+                    $primaryCacheKey,
+                    $response,
+                    $streamB,
+                    $requestTime,
+                    $responseTime,
+                    $pushDeferred,
+                ): void {
                     try {
-                        $bufferedBody = '';
-
-                        while (null !== $chunk = $streamB->read()) {
-                            $bufferedBody .= $chunk;
-
-                            if (\strlen($bufferedBody) > $this->responseSizeLimit) {
-                                return;
-                            }
-                        }
+                        $bufferedBody = ByteStream\buffer($streamB, limit: $this->responseSizeLimit);
 
                         $bodyHash = \hash('sha512', $bufferedBody);
 
@@ -541,26 +512,25 @@ final class SingleUserCache implements ApplicationInterceptor
                             $this->getPrimaryCacheKey($response->getRequest()),
                             $storedResponses
                         );
+                    } catch (ByteStream\BufferException) {
+                        return;
                     } catch (\Throwable $e) {
                         $this->logger->warning('Failed to store response for {request_uri} in cache due to an exception', [
                             'request_uri' => $response->getRequest()->getUri()->withUserInfo(''),
                             'exception' => $e,
                         ]);
                     } finally {
-                        if ($pushDeferred) {
-                            $pushDeferred->resolve();
-                        }
+                        $pushDeferred?->complete();
+                        unset($this->pendingResponses[$primaryCacheKey]);
                     }
                 });
             } elseif ($pushDeferred) {
-                $pushDeferred->resolve();
+                $pushDeferred->complete();
             }
 
             return $response;
         } catch (\Throwable $e) {
-            if ($pushDeferred) {
-                $pushDeferred->resolve();
-            }
+            $pushDeferred?->complete();
 
             throw $e;
         }

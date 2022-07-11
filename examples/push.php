@@ -1,53 +1,45 @@
 <?php
 
-use Amp\Cache\ArrayCache;
+use Amp\Cache\LocalCache;
 use Amp\Http\Client\Cache\SingleUserCache;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
-use Amp\Http\Client\Response;
 use Amp\Log\ConsoleFormatter;
 use Amp\Log\StreamHandler;
-use Amp\Loop;
 use Monolog\Logger;
 use Monolog\Processor\PsrLogMessageProcessor;
 use function Amp\ByteStream\getStdout;
-use function Amp\getCurrentTime;
+use function Amp\now;
 
 require __DIR__ . '/../vendor/autoload.php';
 
-Loop::run(static function () use ($argv) {
-    $logFormatter = new ConsoleFormatter;
-    $logFormatter->allowInlineLineBreaks();
-    $logFormatter->ignoreEmptyContextAndExtra();
+$logFormatter = new ConsoleFormatter;
+$logFormatter->allowInlineLineBreaks();
+$logFormatter->ignoreEmptyContextAndExtra();
 
-    $streamHandler = new StreamHandler(getStdout());
-    $streamHandler->setFormatter($logFormatter);
+$streamHandler = new StreamHandler(getStdout());
+$streamHandler->setFormatter($logFormatter);
 
-    $logger = new Logger('main');
-    $logger->pushProcessor(new PsrLogMessageProcessor);
-    $logger->pushHandler($streamHandler);
+$logger = new Logger('main');
+$logger->pushProcessor(new PsrLogMessageProcessor);
+$logger->pushHandler($streamHandler);
 
-    $cache = new SingleUserCache(new ArrayCache, $logger);
+$pushEnabled = ($argv[1] ?? '') === '--disable-push';
 
-    $pushDisabled = ($argv[1] ?? '') === '--disable-push';
-    if ($pushDisabled) {
-        $cache->setStorePushedResponses(false);
-    }
+$cache = new SingleUserCache(new LocalCache(), $logger, storePushedResponses: $pushEnabled);
 
-    $client = (new HttpClientBuilder)
-        ->intercept($cache)
-        ->build();
+$client = (new HttpClientBuilder)
+    ->intercept($cache)
+    ->build();
 
-    $start = getCurrentTime();
+$start = now();
 
-    /** @var Response $response */
-    $response = yield $client->request(new Request('https://http2-server-push-demo.keksi.io/'));
-    yield $response->getBody()->buffer();
+$response = $client->request(new Request('https://http2-server-push-demo.keksi.io/'));
+$response->getBody()->buffer();
 
-    $response = yield $client->request(new Request('https://http2-server-push-demo.keksi.io/image.jpg'));
-    yield $response->getBody()->buffer();
+$response = $client->request(new Request('https://http2-server-push-demo.keksi.io/image.jpg'));
+$response->getBody()->buffer();
 
-    $logger->info('Took {runtime} milliseconds' . (!$pushDisabled ? ', run with --disable-push to compare' : ''), [
-        'runtime' => getCurrentTime() - $start,
-    ]);
-});
+$logger->info('Took {runtime} milliseconds' . ($pushEnabled ? ', run with --disable-push to compare' : ''), [
+    'runtime' => now() - $start,
+]);

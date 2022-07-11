@@ -98,8 +98,7 @@ final class CachedResponse extends Message
     private string $requestTarget;
     private array $requestHeaders;
 
-    /** @var string */
-    private $bodyHash;
+    private string $bodyHash;
 
     private function __construct(
         string $protocolVersion,
@@ -169,7 +168,6 @@ final class CachedResponse extends Message
     {
         $date = parseDateHeader($this->getHeader('date'));
         if ($date === null) {
-            /** @noinspection PhpUndefinedClassInspection */
             throw new \AssertionError('Got a cached response without date header, which should never happen. Please report this as a bug.');
         }
 

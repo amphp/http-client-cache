@@ -2,7 +2,7 @@
 
 namespace Amp\Http\Client\Cache;
 
-use Amp\ByteStream\InMemoryStream;
+use Amp\ByteStream\ReadableBuffer;
 use Amp\Http\Client\Cache\Internal\CachedResponse;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
@@ -62,7 +62,7 @@ class CalculateFreshnessLifetimeTest extends TestCase
     protected function whenFreshnessLifetimeIsCalculated(): void
     {
         $request = new Request('https://example.org/');
-        $response = new Response('1.1', 200, 'OK', $this->headers, new InMemoryStream, $request);
+        $response = new Response('1.1', 200, 'OK', $this->headers, new ReadableBuffer(), $request);
 
         $cachedResponse = CachedResponse::fromResponse($request, $response, now(), now(), 'abc');
 
