@@ -19,7 +19,6 @@ use Amp\Http\Client\HttpException;
 use Amp\Http\Client\Internal\ResponseBodyStream;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
-use Amp\Http\Message;
 use Amp\Pipeline\Queue;
 use Psr\Log\LoggerInterface as PsrLogger;
 use Psr\Log\NullLogger;
