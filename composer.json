@@ -12,6 +12,7 @@
         "amphp/http": "^1.5",
         "amphp/http-client": "^5",
         "amphp/cache": "^2",
+        "amphp/pipeline": "^1",
         "psr/log": "^1.1"
     },
     "require-dev": {
