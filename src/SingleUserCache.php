@@ -47,7 +47,7 @@ final class SingleUserCache implements ApplicationInterceptor
         private readonly PsrLogger $logger = new NullLogger(),
         private readonly int $responseSizeLimit = 1 << 20, // 1MB
         private readonly bool $storePushedResponses = true,
-    ){
+    ) {
     }
 
     public function getRequestCount(): int
@@ -166,7 +166,7 @@ final class SingleUserCache implements ApplicationInterceptor
             new ReadableBuffer($cachedBody),
         );
 
-        $response->setHeader('age', $cachedResponse->getAge());
+        $response->setHeader('age', (string) ($cachedResponse->getAge()));
 
         return $response;
     }
@@ -278,10 +278,6 @@ final class SingleUserCache implements ApplicationInterceptor
     }
 
     /**
-     * @param string $method
-     *
-     * @return bool
-     *
      * @see https://tools.ietf.org/html/rfc7231#section-4.2.3
      */
     private function isCacheableRequestMethod(string $method): bool
@@ -290,10 +286,6 @@ final class SingleUserCache implements ApplicationInterceptor
     }
 
     /**
-     * @param int $status
-     *
-     * @return bool
-     *
      * @see https://tools.ietf.org/html/rfc7231.html#section-6.1
      */
     private function isCacheableResponseCode(int $status): bool
@@ -303,10 +295,6 @@ final class SingleUserCache implements ApplicationInterceptor
     }
 
     /**
-     * @param Response $response
-     *
-     * @return bool
-     *
      * @see https://tools.ietf.org/html/rfc7234.html#section-3
      */
     private function isCacheable(Response $response): bool
@@ -435,8 +423,9 @@ final class SingleUserCache implements ApplicationInterceptor
             $result .= $diff->format("%s second{$plural} ");
         }
 
-        $plural = $diff->f === 1 ? '' : 's';
-        $result .= \round($diff->f * 1000) . " millisecond{$plural}";
+        $millis = (int) \round($diff->f * 1000);
+        $plural = $millis === 1 ? '' : 's';
+        $result .= $millis . " millisecond{$plural}";
 
         return $result;
     }
@@ -542,20 +531,13 @@ final class SingleUserCache implements ApplicationInterceptor
     }
 
     /**
-     * @param Request        $request
-     * @param CachedResponse ...$responses
-     *
-     * @return CachedResponse|null
-     *
      * @see https://tools.ietf.org/html/rfc7234.html#section-4.1
      */
     private function selectStoredResponse(Request $request, CachedResponse ...$responses): ?CachedResponse
     {
         $requestCacheControl = parseCacheControlHeader($request);
 
-        $responses = $this->sortMessagesByDateHeader($responses);
-
-        foreach ($responses as $response) {
+        foreach ($this->sortMessagesByDateHeader($responses) as $response) {
             $responseCacheControl = parseCacheControlHeader($response);
 
             $age = $response->getAge();
@@ -590,9 +572,14 @@ final class SingleUserCache implements ApplicationInterceptor
         return null;
     }
 
+    /**
+     * @param CachedResponse[] $responses
+     *
+     * @return CachedResponse[]
+     */
     private function sortMessagesByDateHeader(array $responses): array
     {
-        \usort($responses, static function (Message $a, Message $b): int {
+        \usort($responses, static function (CachedResponse $a, CachedResponse $b): int {
             $dateA = parseDateHeader($a->getHeader('date'));
             $dateB = parseDateHeader($b->getHeader('date'));
 

@@ -13,6 +13,7 @@
         "bool",
         "iterable",
         "callable",
+        "mixed",
         "void",
         "object",
         "parseDeltaSeconds",
@@ -27,6 +28,7 @@
         "Phar",
         "Reflection",
         "SPL",
-        "standard"
+        "standard",
+        "hash"
     ]
 }

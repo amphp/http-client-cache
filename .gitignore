@@ -4,6 +4,6 @@ coverage
 phpunit.xml
 vendor
 humbug.json
-.php_cs.cache
-.phpunit.result.cache
+.*.cache
+composer-require-checker.phar
 examples/*.cache

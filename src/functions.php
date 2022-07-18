@@ -7,10 +7,6 @@ use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
 
 /**
- * @param string|null $value
- *
- * @return int|null
- *
  * @see https://tools.ietf.org/html/rfc7234.html#section-1.2.1
  */
 function parseDeltaSeconds(?string $value): ?int

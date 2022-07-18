@@ -37,8 +37,6 @@ final class CachedResponse extends Message
     }
 
     /**
-     * @param string $data
-     *
      * @return CachedResponse
      * @throws HttpException
      */
@@ -128,8 +126,6 @@ final class CachedResponse extends Message
     }
 
     /**
-     * @return int
-     *
      * @see https://tools.ietf.org/html/rfc7234.html#section-4.2.1
      */
     public function getFreshnessLifetime(): int
@@ -146,6 +142,7 @@ final class CachedResponse extends Message
                 return 0; // treat as expired
             }
 
+            /** @psalm-suppress PossiblyNullArgument */
             $expires = parseExpiresHeader($this->getHeader('expires'));
             $date = parseDateHeader($this->getHeader('date'));
 
@@ -160,8 +157,6 @@ final class CachedResponse extends Message
     }
 
     /**
-     * @return int
-     *
      * @see https://tools.ietf.org/html/rfc7234.html#section-4.2.3
      */
     public function getAge(): int
@@ -240,6 +235,9 @@ final class CachedResponse extends Message
         }
 
         $varyHeaders = createFieldValueComponentMap(parseFieldValueComponents($this, 'vary'));
+        if ($varyHeaders === null) {
+            return false; // Invalid header?!
+        }
 
         if (isset($varyHeaders['*'])) {
             return false;  // 'A Vary header field-value of "*" always fails to match.'
@@ -275,8 +273,6 @@ final class CachedResponse extends Message
     }
 
     /**
-     * @return bool
-     *
      * @see https://tools.ietf.org/html/rfc7234.html#section-5.3
      */
     public function isStale(): bool
@@ -285,8 +281,6 @@ final class CachedResponse extends Message
     }
 
     /**
-     * @return bool
-     *
      * @see https://tools.ietf.org/html/rfc7234.html#section-5.3
      */
     public function isFresh(): bool
@@ -297,6 +291,8 @@ final class CachedResponse extends Message
     private function buildVaryRequestHeaders(Request $request): array
     {
         $varyHeaders = createFieldValueComponentMap(parseFieldValueComponents($this, 'vary'));
+        \assert($varyHeaders !== null);
+
         $requestHeaders = [];
 
         foreach ($varyHeaders as $varyHeader => $_) {
