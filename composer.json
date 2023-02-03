@@ -13,12 +13,12 @@
         "amphp/http-client": "^5",
         "amphp/cache": "^2",
         "amphp/pipeline": "^1",
-        "psr/log": "^1.1"
+        "psr/log": "^3|^2|^1.1"
     },
     "require-dev": {
         "phpunit/phpunit": "^9",
         "amphp/php-cs-fixer-config": "^2",
-        "monolog/monolog": "^1.24|^2",
+        "monolog/monolog": "^3",
         "amphp/log": "^2",
         "amphp/phpunit-util": "^3",
         "amphp/file": "^3",
