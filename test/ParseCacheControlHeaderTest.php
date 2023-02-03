@@ -2,7 +2,7 @@
 
 namespace Amp\Http\Client\Cache;
 
-use Amp\Http\Message;
+use Amp\Http\HttpMessage;
 use PHPUnit\Framework\TestCase;
 
 class ParseCacheControlHeaderTest extends TestCase
@@ -37,7 +37,7 @@ class ParseCacheControlHeaderTest extends TestCase
 
     private function parse(string $headerValue): array
     {
-        return parseCacheControlHeader(new class(['cache-control' => $headerValue]) extends Message {
+        return parseCacheControlHeader(new class(['cache-control' => $headerValue]) extends HttpMessage {
             public function __construct(array $headers = [])
             {
                 $this->setHeaders($headers);

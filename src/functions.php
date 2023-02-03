@@ -2,7 +2,7 @@
 
 namespace Amp\Http\Client\Cache;
 
-use Amp\Http\Message;
+use Amp\Http\HttpMessage;
 use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
 
@@ -68,7 +68,7 @@ function parseDateHeader(?string $value): ?\DateTimeImmutable
     return \DateTimeImmutable::createFromFormat('D, d M Y H:i:s e', $value, new \DateTimeZone('UTC')) ?: null;
 }
 
-function parseCacheControlHeader(Message $message): array
+function parseCacheControlHeader(HttpMessage $message): array
 {
     // Only fallback to pragma if no header is present
     // See https://tools.ietf.org/html/rfc7234.html#section-5.4

@@ -6,7 +6,7 @@ use Amp\Http\Client\Cache\ResponseCacheControl;
 use Amp\Http\Client\HttpException;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
-use Amp\Http\Message;
+use Amp\Http\HttpMessage;
 use function Amp\Http\Client\Cache\now;
 use function Amp\Http\Client\Cache\parseCacheControlHeader;
 use function Amp\Http\Client\Cache\parseDateHeader;
@@ -15,7 +15,7 @@ use function Amp\Http\createFieldValueComponentMap;
 use function Amp\Http\parseFieldValueComponents;
 
 /** @internal */
-final class CachedResponse extends Message
+final class CachedResponse extends HttpMessage
 {
     public static function fromResponse(
         Request $request,

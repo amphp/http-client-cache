@@ -9,7 +9,7 @@
         "ext-hash": "*",
         "amphp/amp": "^3",
         "amphp/byte-stream": "^2",
-        "amphp/http": "^1.5",
+        "amphp/http": "^2-dev",
         "amphp/http-client": "^5",
         "amphp/cache": "^2",
         "amphp/pipeline": "^1",
