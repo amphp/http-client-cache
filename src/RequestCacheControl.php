@@ -5,7 +5,7 @@ namespace Amp\Http\Client\Cache;
 /**
  * @se https://tools.ietf.org/html/rfc7234.html#section-5.2.1
  */
-final class RequestCacheControl
+enum RequestCacheControl
 {
     /** @see https://tools.ietf.org/html/rfc7234.html#section-5.2.1.1 */
     public const MAX_AGE = 'max-age';

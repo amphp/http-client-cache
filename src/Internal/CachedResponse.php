@@ -84,44 +84,26 @@ final class CachedResponse extends HttpMessage
         }
     }
 
-    private \DateTimeImmutable $requestTime;
-    private \DateTimeImmutable $responseTime;
-
-    private string $protocolVersion;
-    private int $status;
-    private string $reason;
-
-    private string $requestMethod;
-    private string $requestTarget;
-    private array $requestHeaders;
-
-    private string $bodyHash;
+    private readonly string $requestMethod;
+    private readonly string $requestTarget;
+    private readonly array $requestHeaders;
 
     private function __construct(
-        string $protocolVersion,
-        int $status,
-        string $reason,
+        private readonly string $protocolVersion,
+        private readonly int $status,
+        private readonly string $reason,
         array $headers,
         Request $request,
-        \DateTimeImmutable $requestTime,
-        \DateTimeImmutable $responseTime,
-        string $bodyHash
+        private readonly \DateTimeImmutable $requestTime,
+        private readonly \DateTimeImmutable $responseTime,
+        private readonly string $bodyHash
     ) {
-        $this->protocolVersion = $protocolVersion;
-        $this->status = $status;
-        $this->reason = $reason;
-
         /** @noinspection PhpUnhandledExceptionInspection */
         $this->setHeaders($headers);
 
         $this->requestMethod = $request->getMethod();
         $this->requestTarget = (string) $request->getUri();
         $this->requestHeaders = $this->buildVaryRequestHeaders($request);
-
-        $this->requestTime = $requestTime;
-        $this->responseTime = $responseTime;
-
-        $this->bodyHash = $bodyHash;
     }
 
     /**

@@ -5,7 +5,7 @@ namespace Amp\Http\Client\Cache;
 /**
  * @see https://tools.ietf.org/html/rfc7234.html#section-5.2.1
  */
-final class ResponseCacheControl
+enum ResponseCacheControl
 {
     /** @see https://tools.ietf.org/html/rfc7234.html#section-5.2.2.1 */
     public const MUST_REVALIDATE = 'must-revalidate';
