@@ -40,6 +40,6 @@ $response->getBody()->buffer();
 $response = $client->request(new Request('https://http2-server-push-demo.keksi.io/image.jpg'));
 $response->getBody()->buffer();
 
-$logger->info('Took {runtime} milliseconds' . ($pushEnabled ? ', run with --disable-push to compare' : ''), [
+$logger->info('Took {runtime} seconds' . ($pushEnabled ? ', run with --disable-push to compare' : ''), [
     'runtime' => now() - $start,
 ]);

@@ -30,7 +30,7 @@ $client = (new HttpClientBuilder)
     ->intercept(new SingleUserCache($cache, $logger))
     ->build();
 
-$response = $client->request(new Request('https://api.github.com/users/kelunik'));
+$response = $client->request(new Request('https://api.github.com/orgs/amphp'));
 $requestId1 = $response->getHeader('x-github-request-id');
 $logger->info('Received response: ' . $requestId1);
 $response->getBody()->buffer();
@@ -38,7 +38,7 @@ $response->getBody()->buffer();
 $logger->info('Waiting 3 seconds before making another request...');
 delay(3);
 
-$response = $client->request(new Request('https://api.github.com/users/kelunik'));
+$response = $client->request(new Request('https://api.github.com/orgs/amphp'));
 $requestId2 = $response->getHeader('x-github-request-id');
 $logger->info('Received response: ' . $requestId2);
 $response->getBody()->buffer();
