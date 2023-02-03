@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 
 namespace Amp\Http\Client\Cache\Internal;
 
@@ -37,7 +37,6 @@ final class CachedResponse extends HttpMessage
     }
 
     /**
-     * @return CachedResponse
      * @throws HttpException
      */
     public static function fromCacheData(string $data): self
