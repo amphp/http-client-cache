@@ -1,7 +1,5 @@
 # http-client-cache
 
-[![Build Status](https://img.shields.io/travis/amphp/http-client-cache/master.svg?style=flat-square)](https://travis-ci.org/amphp/http-client-cache)
-[![CoverageStatus](https://img.shields.io/coveralls/amphp/http-client-cache/master.svg?style=flat-square)](https://coveralls.io/github/amphp/http-client-cache?branch=master)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)
 
 This package provides an HTTP cache in form of an `ApplicationInterceptor` for [Amp's HTTP client](https://github.com/amphp/http-client) based on [RFC 7234](https://tools.ietf.org/html/rfc7234.html).
