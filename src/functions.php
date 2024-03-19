@@ -3,8 +3,7 @@
 namespace Amp\Http\Client\Cache;
 
 use Amp\Http\HttpMessage;
-use function Amp\Http\createFieldValueComponentMap;
-use function Amp\Http\parseFieldValueComponents;
+use function Amp\Http\parseMultipleHeaderFields;
 
 /**
  * @see https://tools.ietf.org/html/rfc7234.html#section-1.2.1
@@ -73,42 +72,43 @@ function parseCacheControlHeader(HttpMessage $message): array
     // Only fallback to pragma if no header is present
     // See https://tools.ietf.org/html/rfc7234.html#section-5.4
     $header = $message->hasHeader('cache-control') ? 'cache-control' : 'pragma';
-    $parsedComponents = createFieldValueComponentMap(parseFieldValueComponents($message, $header));
+    $components = parseMultipleHeaderFields($message, $header);
 
-    if ($parsedComponents === null) {
+    if ($components === null) {
         return ['no-store' => true];
     }
 
     $cacheControl = [];
 
-    foreach ($parsedComponents as $key => $value) {
-        $deltaSecondAttributes = ['max-age', 'max-stale', 'min-fresh', 's-maxage'];
+    $deltaSecondAttributes = ['max-age', 'max-stale', 'min-fresh', 's-maxage'];
+    $tokenOnlyAttributes = [
+        'no-cache',
+        'no-store',
+        'no-transform',
+        'only-if-cached',
+        'must-revalidate',
+        'public',
+        'private',
+        'proxy-revalidate',
+    ];
 
-        $tokenOnlyAttributes = [
-            'no-cache',
-            'no-store',
-            'no-transform',
-            'only-if-cached',
-            'must-revalidate',
-            'public',
-            'private',
-            'proxy-revalidate',
-        ];
-
-        if (\in_array($key, $deltaSecondAttributes, true)) {
-            if ($key === 'max-stale' && $value === '') {
-                $value = \PHP_INT_MAX;
+    foreach ($components as $component) {
+        foreach ($component as $key => $value) {
+            if (\in_array($key, $deltaSecondAttributes, true)) {
+                if ($key === 'max-stale' && $value === '') {
+                    $value = \PHP_INT_MAX;
+                } else {
+                    $value = parseDeltaSeconds($value) ?? 0;
+                }
+            } elseif (\in_array($key, $tokenOnlyAttributes, true)) {
+                // no or invalid value given, ignore that fact
+                $value = true;
             } else {
-                $value = parseDeltaSeconds($value) ?? 0;
+                continue; // no or unknown key given, ignore token
             }
-        } elseif (\in_array($key, $tokenOnlyAttributes, true)) {
-            // no or invalid value given, ignore that fact
-            $value = true;
-        } else {
-            continue; // no or unknown key given, ignore token
-        }
 
-        $cacheControl[$key] = $value;
+            $cacheControl[$key] = $value;
+        }
     }
 
     return $cacheControl;

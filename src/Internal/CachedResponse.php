@@ -11,8 +11,7 @@ use function Amp\Http\Client\Cache\now;
 use function Amp\Http\Client\Cache\parseCacheControlHeader;
 use function Amp\Http\Client\Cache\parseDateHeader;
 use function Amp\Http\Client\Cache\parseExpiresHeader;
-use function Amp\Http\createFieldValueComponentMap;
-use function Amp\Http\parseFieldValueComponents;
+use function Amp\Http\splitHeader;
 
 /** @internal */
 final class CachedResponse extends HttpMessage
@@ -215,13 +214,13 @@ final class CachedResponse extends HttpMessage
             return true;
         }
 
-        $varyHeaders = createFieldValueComponentMap(parseFieldValueComponents($this, 'vary'));
+        $varyHeaders = splitHeader($this, 'vary');
         if ($varyHeaders === null) {
             return false; // Invalid header?!
         }
 
-        if (isset($varyHeaders['*'])) {
-            return false;  // 'A Vary header field-value of "*" always fails to match.'
+        if (\in_array('*', $varyHeaders, true)) {
+            return false;  // A Vary header field-value of "*" always fails to match.
         }
 
         foreach ($varyHeaders as $varyHeader) {
@@ -271,12 +270,12 @@ final class CachedResponse extends HttpMessage
 
     private function buildVaryRequestHeaders(Request $request): array
     {
-        $varyHeaders = createFieldValueComponentMap(parseFieldValueComponents($this, 'vary'));
+        $varyHeaders = splitHeader($this, 'vary');
         \assert($varyHeaders !== null);
 
         $requestHeaders = [];
 
-        foreach ($varyHeaders as $varyHeader => $_) {
+        foreach ($varyHeaders as $varyHeader) {
             $requestHeaders[$varyHeader] = $request->getHeaderArray($varyHeader);
         }
 
