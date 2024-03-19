@@ -26,7 +26,7 @@ composer require amphp/http-client-cache
 ## Usage
 
 Currently, only a `SingleUserCache` is provided.
-Therefore it is unsafe to use a single instance for multiple users, e.g. different access tokens.
+Therefore, it is unsafe to use a single instance for multiple users, e.g. different access tokens.
 
 ```php
 use Amp\Cache\FileCache;
