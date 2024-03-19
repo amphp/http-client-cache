@@ -13,7 +13,10 @@ use function Amp\Http\Client\Cache\parseDateHeader;
 use function Amp\Http\Client\Cache\parseExpiresHeader;
 use function Amp\Http\splitHeader;
 
-/** @internal */
+/**
+ * @internal
+ * @psalm-type ProtocolVersion = '1.0'|'1.1'|'2'
+ */
 final class CachedResponse extends HttpMessage
 {
     public static function fromResponse(
@@ -87,6 +90,9 @@ final class CachedResponse extends HttpMessage
     private readonly string $requestTarget;
     private readonly array $requestHeaders;
 
+    /**
+     * @param ProtocolVersion $protocolVersion
+     */
     private function __construct(
         private readonly string $protocolVersion,
         private readonly int $status,
@@ -242,6 +248,7 @@ final class CachedResponse extends HttpMessage
         return $this->reason;
     }
 
+    /** @return ProtocolVersion */
     public function getProtocolVersion(): string
     {
         return $this->protocolVersion;
